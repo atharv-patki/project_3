@@ -5,6 +5,7 @@ from flask_cors import CORS
 from config import Config
 from database import DatabaseManager
 from storage_service import StorageService
+from security import verify_file_signature, CleanupWorker
 
 # Allowed video extensions
 ALLOWED_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv'}
@@ -25,6 +26,38 @@ def create_app():
 
     # Enable CORS
     CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+    # Start background cleanup task (daemon thread)
+    # Avoid duplicate threads during Flask reloader reload
+    if not Config.DEBUG or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        # Default cleanup: check every 10 minutes, expire files after 2 hours
+        cleanup_worker = CleanupWorker(expiry_seconds=7200, check_interval_seconds=600)
+        cleanup_worker.start()
+
+    # Generic Error Handlers
+    @app.errorhandler(400)
+    def bad_request(e):
+        return jsonify({"error": "Bad Request", "message": str(e.description)}), 400
+
+    @app.errorhandler(404)
+    def not_found(e):
+        return jsonify({"error": "Not Found", "message": str(e.description)}), 404
+
+    @app.errorhandler(405)
+    def method_not_allowed(e):
+        return jsonify({"error": "Method Not Allowed", "message": str(e.description)}), 405
+
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return jsonify({"error": e.name, "message": e.description}), e.code
+            
+        app.logger.error(f"Unhandled Exception: {str(e)}", exc_info=True)
+        return jsonify({
+            "error": "Internal Server Error",
+            "message": "An unexpected server error occurred."
+        }), 500
 
     @app.route('/api/health', methods=['GET'])
     def health_check():
@@ -115,6 +148,22 @@ def create_app():
         try:
             # Read chunk raw bytes
             chunk_data = file.read()
+            
+            # Security verification: check file magic bytes on chunk 0
+            if chunk_index == 0:
+                if not verify_file_signature(chunk_data, session['filename']):
+                    # Delete partial temporary directory
+                    import shutil
+                    temp_dir = StorageService.get_upload_temp_dir(video_id)
+                    if temp_dir.exists():
+                        shutil.rmtree(temp_dir)
+                    # Mark failed in DB
+                    DatabaseManager.update_status(video_id, 'failed')
+                    return jsonify({
+                        "error": "Security Verification Failed",
+                        "message": "The uploaded file header does not match its declared video extension structure."
+                    }), 400
+
             # Save raw bytes to disk
             StorageService.save_chunk(video_id, chunk_index, chunk_data)
             
