@@ -23,6 +23,7 @@ class Config:
 
     UPLOAD_TEMP_DIR = BASE_DIR / _temp_dir if not os.path.isabs(_temp_dir) else Path(_temp_dir)
     UPLOAD_FINAL_DIR = BASE_DIR / _final_dir if not os.path.isabs(_final_dir) else Path(_final_dir)
+    DB_PATH = BASE_DIR / os.getenv('DB_PATH', 'storage/metadata.db')
 
     # Size constraints
     # Default Max: 500MB
@@ -35,6 +36,9 @@ class Config:
         """Ensure all required storage directories exist."""
         cls.UPLOAD_TEMP_DIR.mkdir(parents=True, exist_ok=True)
         cls.UPLOAD_FINAL_DIR.mkdir(parents=True, exist_ok=True)
+        # Ensure database directory exists
+        cls.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         print(f"[*] Storage initialized:")
         print(f"    Temp directory:  {cls.UPLOAD_TEMP_DIR}")
         print(f"    Final directory: {cls.UPLOAD_FINAL_DIR}")
+        print(f"    Database path:   {cls.DB_PATH}")
