@@ -92,3 +92,15 @@ class DatabaseManager:
             return None
         finally:
             conn.close()
+
+    @classmethod
+    def list_uploads(cls) -> list:
+        """Fetch all upload sessions from the database ordered by creation date."""
+        conn = cls.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM uploads ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()

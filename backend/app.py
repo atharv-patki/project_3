@@ -248,6 +248,14 @@ def create_app():
             "progress_percent": progress_percentage
         }), 200
 
+    @app.route('/api/videos', methods=['GET'])
+    def list_videos():
+        try:
+            videos = DatabaseManager.list_uploads()
+            return jsonify(videos), 200
+        except Exception as e:
+            return jsonify({"error": f"Failed to list videos: {str(e)}"}), 500
+
     return app
 
 if __name__ == '__main__':

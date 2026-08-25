@@ -26,6 +26,11 @@ function switchView(targetId) {
             section.classList.remove("active");
         }
     });
+
+    // If switching to videos library, refresh registry
+    if (targetView === "view-videos") {
+        fetchLibrary();
+    }
 }
 
 // Attach Nav Event Listeners
@@ -34,13 +39,13 @@ navItems.forEach(item => {
         e.preventDefault();
         switchView(item.id);
         
-        // Update URL hash without jumping
+        // Update URL hash
         const hash = item.getAttribute("href");
         history.pushState(null, null, hash);
     });
 });
 
-// Handle browser back/forward buttons
+// Handle browser navigation buttons
 window.addEventListener("popstate", () => {
     const hash = window.location.hash || "#dashboard";
     const matchingNav = Array.from(navItems).find(item => item.getAttribute("href") === hash);
@@ -80,7 +85,77 @@ async function checkSystemHealth() {
     }
 }
 
-// Drag & Drop Basic Interface Events
+// Media Library Ingestion Display
+async function fetchLibrary() {
+    const tableBody = document.getElementById("library-table-body");
+    const totalCompletedLabel = document.getElementById("stat-completed-uploads");
+    const totalJobsLabel = document.getElementById("stat-transcoding-jobs");
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/videos`);
+        if (!response.ok) throw new Error("Failed to fetch library.");
+
+        const videos = await response.json();
+        
+        // Update Dashboard Stats Counters
+        const completedVideos = videos.filter(v => v.status === 'completed');
+        const activeJobs = videos.filter(v => v.status === 'initiated' || v.status === 'uploading');
+        totalCompletedLabel.innerText = completedVideos.length;
+        totalJobsLabel.innerText = activeJobs.length;
+
+        if (videos.length === 0) {
+            tableBody.innerHTML = `<tr><td colspan="6" class="table-empty">No video assets found in registry.</td></tr>`;
+            return;
+        }
+
+        // Render Table Rows
+        tableBody.innerHTML = videos.map(video => {
+            const date = new Date(video.created_at + 'Z').toLocaleString();
+            const sizeInMB = (video.file_size / (1024 * 1024)).toFixed(2);
+            
+            // Shorten UUID
+            const shortId = `${video.video_id.substring(0, 8)}...`;
+            
+            // Progress Bar render logic
+            let progressHtml = "";
+            if (video.status === 'completed') {
+                progressHtml = `
+                    <div class="table-progress-bar">
+                        <div class="table-progress-fill" style="width: 100%"></div>
+                    </div>
+                    <span>100%</span>
+                `;
+            } else if (video.status === 'failed') {
+                progressHtml = `
+                    <div class="table-progress-bar">
+                        <div class="table-progress-fill" style="width: 0%; background: var(--accent-red)"></div>
+                    </div>
+                    <span>0%</span>
+                `;
+            } else {
+                // Approximate from chunk count
+                progressHtml = `<span style="color: var(--text-secondary)">Pending upload</span>`;
+            }
+
+            return `
+                <tr>
+                    <td style="font-family: monospace; font-size: 0.8rem;" title="${video.video_id}">${shortId}</td>
+                    <td style="font-weight: 500;">${video.filename}</td>
+                    <td>${sizeInMB} MB</td>
+                    <td>${progressHtml}</td>
+                    <td><span class="badge badge-${video.status}">${video.status}</span></td>
+                    <td style="color: var(--text-secondary);">${date}</td>
+                </tr>
+            `;
+        }).join("");
+
+    } catch (error) {
+        console.error("Library load error:", error);
+        tableBody.innerHTML = `<tr><td colspan="6" class="table-empty" style="color: var(--accent-red)">Error querying asset registry. Is the server running?</td></tr>`;
+    }
+}
+
+// Drag & Drop / File Selection UI Elements
 const dropZone = document.getElementById("drop-zone");
 const fileInput = document.getElementById("file-input");
 const filePanel = document.getElementById("file-panel");
@@ -88,12 +163,21 @@ const fileNameLabel = document.getElementById("file-name");
 const fileSizeLabel = document.getElementById("file-size");
 const btnCancelFile = document.getElementById("btn-cancel-file");
 
-// Trigger file input open
+// Upload Execution States
+let selectedFile = null;
+let videoId = null;
+let chunkSize = null;
+let totalChunks = null;
+let currentChunkIndex = 0;
+let isPaused = false;
+let uploadStartTime = null;
+
+// Trigger file input click
 dropZone.addEventListener("click", () => {
     fileInput.click();
 });
 
-// Drag Enter / Over
+// Drag highlights
 ['dragenter', 'dragover'].forEach(eventName => {
     dropZone.addEventListener(eventName, (e) => {
         e.preventDefault();
@@ -102,7 +186,6 @@ dropZone.addEventListener("click", () => {
     }, false);
 });
 
-// Drag Leave
 ['dragleave', 'drop'].forEach(eventName => {
     dropZone.addEventListener(eventName, (e) => {
         e.preventDefault();
@@ -111,7 +194,7 @@ dropZone.addEventListener("click", () => {
     }, false);
 });
 
-// Handle File Drop
+// Drop handler
 dropZone.addEventListener('drop', (e) => {
     const dt = e.dataTransfer;
     const files = dt.files;
@@ -120,41 +203,235 @@ dropZone.addEventListener('drop', (e) => {
     }
 });
 
-// Handle File Browse Selection
+// File input browse handler
 fileInput.addEventListener('change', () => {
     if (fileInput.files.length > 0) {
         handleFileSelection(fileInput.files[0]);
     }
 });
 
-let selectedFile = null;
-
 function handleFileSelection(file) {
     selectedFile = file;
-    
-    // Display file stats
     fileNameLabel.innerText = file.name;
     const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
     fileSizeLabel.innerText = `${sizeInMB} MB`;
     
-    // Show panel, hide drop zone
+    // Switch Panels
     dropZone.classList.add("hidden");
     filePanel.classList.remove("hidden");
     
-    // Reset any previous upload session UI state
+    // Reset Upload State variables
+    videoId = null;
+    chunkSize = null;
+    totalChunks = null;
+    currentChunkIndex = 0;
+    isPaused = false;
+    
+    // Reset UI
     document.getElementById("progress-section").classList.add("hidden");
     document.getElementById("btn-start-upload").classList.remove("hidden");
+    document.getElementById("btn-start-upload").innerHTML = `<i class="fa-solid fa-play"></i> Start Chunked Upload`;
     document.getElementById("btn-pause-upload").classList.add("hidden");
 }
 
-// Cancel selected file
+// Cancel click
 btnCancelFile.addEventListener("click", () => {
     selectedFile = null;
     fileInput.value = "";
+    videoId = null;
+    isPaused = false;
     
-    // Reset panels
     dropZone.classList.remove("hidden");
     filePanel.classList.add("hidden");
+});
+
+// Start Upload Handler
+const btnStartUpload = document.getElementById("btn-start-upload");
+const btnPauseUpload = document.getElementById("btn-pause-upload");
+
+btnStartUpload.addEventListener("click", async () => {
+    if (!selectedFile) return;
+
+    if (videoId && isPaused) {
+        // Resuming paused upload
+        isPaused = false;
+        btnStartUpload.classList.add("hidden");
+        btnPauseUpload.classList.remove("hidden");
+        document.getElementById("upload-status-label").innerText = `Resuming upload...`;
+        uploadStartTime = Date.now() - ((currentChunkIndex / totalChunks) * (Date.now() - uploadStartTime)); // Adjust start time for math
+        uploadNextChunk();
+        return;
+    }
+
+    try {
+        btnStartUpload.disabled = true;
+        document.getElementById("upload-status-label").innerText = "Initializing session on server...";
+        document.getElementById("progress-section").classList.remove("hidden");
+        
+        // 1. Initiate Upload session
+        const initResponse = await fetch(`${API_BASE_URL}/upload/initiate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                filename: selectedFile.name,
+                file_size: selectedFile.size
+            })
+        });
+
+        const initData = await initResponse.json();
+        if (!initResponse.ok) {
+            throw new Error(initData.error || "Initialization failed.");
+        }
+
+        videoId = initData.video_id;
+        chunkSize = initData.chunk_size;
+        totalChunks = initData.total_chunks;
+        currentChunkIndex = 0;
+        isPaused = false;
+        uploadStartTime = Date.now();
+
+        console.log(`[+] Upload initiated. ID: ${videoId}, Chunks: ${totalChunks}`);
+
+        // Update UI Button states
+        btnStartUpload.disabled = false;
+        btnStartUpload.classList.add("hidden");
+        btnPauseUpload.classList.remove("hidden");
+
+        // 2. Begin uploading chunks
+        uploadNextChunk();
+
+    } catch (error) {
+        console.error("Initiate error:", error);
+        alert(`Failed to initialize upload: ${error.message}`);
+        document.getElementById("upload-status-label").innerText = `Error: ${error.message}`;
+        btnStartUpload.disabled = false;
+    }
+});
+
+// Pause Upload Handler
+btnPauseUpload.addEventListener("click", () => {
+    isPaused = true;
+    btnPauseUpload.classList.add("hidden");
+    btnStartUpload.classList.remove("hidden");
+    btnStartUpload.innerHTML = `<i class="fa-solid fa-play"></i> Resume Upload`;
+    document.getElementById("upload-status-label").innerText = "Upload paused.";
+});
+
+// Sequentially upload chunks
+async function uploadNextChunk() {
+    if (isPaused) return;
+
+    const start = currentChunkIndex * chunkSize;
+    const end = Math.min(start + chunkSize, selectedFile.size);
+    const chunkBlob = selectedFile.slice(start, end);
+
+    document.getElementById("upload-status-label").innerText = `Uploading chunk ${currentChunkIndex + 1} of ${totalChunks}...`;
+
+    const formData = new FormData();
+    formData.append("video_id", videoId);
+    formData.append("chunk_index", currentChunkIndex);
+    formData.append("file", chunkBlob, selectedFile.name);
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/upload/chunk`, {
+            method: "POST",
+            body: formData
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || `Chunk ${currentChunkIndex} upload failed.`);
+        }
+
+        console.log(`[+] Chunk ${currentChunkIndex} uploaded.`);
+        
+        // Progress math
+        currentChunkIndex++;
+        const percent = Math.min(Math.round((currentChunkIndex / totalChunks) * 100), 100);
+        document.getElementById("progress-bar-fill").style.width = `${percent}%`;
+        document.getElementById("upload-percentage").innerText = `${percent}%`;
+
+        // Calculate speed & ETA
+        const timeElapsed = (Date.now() - uploadStartTime) / 1000;
+        const bytesUploaded = Math.min(currentChunkIndex * chunkSize, selectedFile.size);
+        const speedBytes = bytesUploaded / timeElapsed;
+        const speedMB = (speedBytes / (1024 * 1024)).toFixed(2);
+        
+        document.getElementById("upload-speed").innerHTML = `<i class="fa-solid fa-gauge-high"></i> ${speedMB} MB/s`;
+
+        const remainingBytes = selectedFile.size - bytesUploaded;
+        const etaSeconds = speedBytes > 0 ? remainingBytes / speedBytes : 0;
+        const etaMinutes = Math.floor(etaSeconds / 60);
+        const etaRemainderSeconds = Math.floor(etaSeconds % 60);
+        const etaFormatted = `${etaMinutes}:${etaRemainderSeconds.toString().padStart(2, '0')}`;
+
+        document.getElementById("upload-time-remaining").innerHTML = `<i class="fa-solid fa-clock"></i> ${etaFormatted} remaining`;
+
+        if (currentChunkIndex < totalChunks) {
+            // Recurse next chunk
+            uploadNextChunk();
+        } else {
+            // Complete upload
+            completeUploadSession();
+        }
+
+    } catch (error) {
+        console.error(`Upload error on chunk ${currentChunkIndex}:`, error);
+        alert(`Upload interrupted: ${error.message}`);
+        document.getElementById("upload-status-label").innerText = `Upload failed: ${error.message}`;
+        
+        isPaused = true;
+        btnPauseUpload.classList.add("hidden");
+        btnStartUpload.classList.remove("hidden");
+        btnStartUpload.innerHTML = `<i class="fa-solid fa-rotate-left"></i> Retry Upload`;
+    }
+}
+
+// Complete and merge session
+async function completeUploadSession() {
+    document.getElementById("upload-status-label").innerText = "Assembling chunks on server...";
+    btnPauseUpload.classList.add("hidden");
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/upload/complete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ video_id: videoId })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || "Merging failed.");
+        }
+
+        console.log("[+] Merge complete:", data);
+        document.getElementById("upload-status-label").innerHTML = `<span style="color: var(--accent-green)">Upload complete and verified!</span>`;
+        
+        // Reset file selection
+        selectedFile = null;
+        fileInput.value = "";
+        
+        // Transition back to play button as finished state
+        btnStartUpload.classList.remove("hidden");
+        btnStartUpload.innerHTML = `<i class="fa-solid fa-check"></i> Finished`;
+        btnStartUpload.disabled = true;
+
+        // Refresh stats/library registry
+        fetchLibrary();
+
+    } catch (error) {
+        console.error("Complete error:", error);
+        alert(`Merge error: ${error.message}`);
+        document.getElementById("upload-status-label").innerText = `Merge error: ${error.message}`;
+        
+        btnStartUpload.classList.remove("hidden");
+        btnStartUpload.innerHTML = `<i class="fa-solid fa-rotate-left"></i> Retry Complete`;
+    }
+}
+
+// Registry Refresher button
+document.getElementById("btn-refresh-library").addEventListener("click", () => {
+    fetchLibrary();
 });
 
 // Initial Setup on Page Load
@@ -166,7 +443,10 @@ document.addEventListener("DOMContentLoaded", () => {
         switchView(matchingNav.id);
     }
     
-    // Initialize Health checks and set poll interval (every 10 seconds)
+    // Initialize health and library query
     checkSystemHealth();
+    fetchLibrary();
+    
+    // Regular health check interval
     setInterval(checkSystemHealth, 10000);
 });
