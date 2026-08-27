@@ -15,6 +15,7 @@ class Config:
     DEBUG = ENV == 'development'
     PORT = int(os.getenv('PORT', 5000))
     HOST = os.getenv('HOST', '127.0.0.1')
+    FFMPEG_PATH = os.getenv('FFMPEG_PATH', 'ffmpeg')
 
     # Storage paths
     # Resolve relative paths relative to BASE_DIR, keep absolute paths intact

@@ -36,3 +36,6 @@ ENV/
 
 # Project storage
 storage/
+
+# Local binaries (FFmpeg)
+backend/bin/
