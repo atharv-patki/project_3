@@ -6,6 +6,7 @@ from config import Config
 from database import DatabaseManager
 from storage_service import StorageService
 from security import verify_file_signature, CleanupWorker
+from worker import queue_transcode_job
 
 # Allowed video extensions
 ALLOWED_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv'}
@@ -204,6 +205,12 @@ def create_app():
             )
             # Update database status
             DatabaseManager.update_status(video_id, 'completed')
+            
+            # Queue background transcoding job
+            try:
+                queue_transcode_job(video_id)
+            except Exception as w_err:
+                print(f"[-] Failed to enqueue transcode job for {video_id}: {w_err}")
         except Exception as e:
             DatabaseManager.update_status(video_id, 'failed')
             return jsonify({"error": f"Failed to complete and merge upload: {str(e)}"}), 500
