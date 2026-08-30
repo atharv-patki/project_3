@@ -1,6 +1,6 @@
 import os
 import math
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from config import Config
 from database import DatabaseManager
@@ -262,6 +262,28 @@ def create_app():
             return jsonify(videos), 200
         except Exception as e:
             return jsonify({"error": f"Failed to list videos: {str(e)}"}), 500
+
+    @app.route('/api/transcode/status/<video_id>', methods=['GET'])
+    def transcode_status(video_id):
+        session = DatabaseManager.get_upload_session(video_id)
+        if not session:
+            return jsonify({"error": f"Video session '{video_id}' not found."}), 404
+            
+        return jsonify({
+            "video_id": video_id,
+            "transcode_status": session.get('transcode_status', 'none'),
+            "transcode_progress": session.get('transcode_progress', 0.0),
+            "path_720p": session.get('path_720p'),
+            "path_480p": session.get('path_480p'),
+            "path_thumbnail": session.get('path_thumbnail')
+        }), 200
+
+    @app.route('/stream/<path:filename>', methods=['GET'])
+    def stream_file(filename):
+        try:
+            return send_from_directory(Config.UPLOAD_FINAL_DIR, filename)
+        except FileNotFoundError:
+            return jsonify({"error": "File not found."}), 404
 
     return app
 
