@@ -231,12 +231,12 @@
                             <table class="asset-table">
                                 <thead>
                                     <tr>
-                                        <th>Video ID</th>
                                         <th>Filename</th>
                                         <th>Original Size</th>
-                                        <th>Upload Progress</th>
-                                        <th>Status</th>
+                                        <th>Upload</th>
+                                        <th>Transcoding</th>
                                         <th>Created At</th>
+                                        <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody id="library-table-body">
@@ -245,6 +245,32 @@
                                     </tr>
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+
+                    <!-- Interactive Multi-Resolution Video Player Card -->
+                    <div class="video-player-card hidden" id="video-player-card">
+                        <div class="player-header">
+                            <div class="player-title-wrapper">
+                                <i class="fa-solid fa-circle-play icon-purple"></i>
+                                <h3 id="player-video-title">Playing: Video Title</h3>
+                            </div>
+                            <button class="btn-icon" id="btn-close-player">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+                        <div class="player-body">
+                            <video id="video-player" controls preload="metadata" poster="">
+                                <source id="video-source" src="" type="video/mp4">
+                                Your browser does not support the HTML5 video player.
+                            </video>
+                        </div>
+                        <div class="player-footer">
+                            <div class="resolution-controls">
+                                <span class="control-label"><i class="fa-solid fa-sliders"></i> Stream Quality:</span>
+                                <button class="btn btn-quality active" id="btn-quality-720p" data-quality="720p">720p HD</button>
+                                <button class="btn btn-quality" id="btn-quality-480p" data-quality="480p">480p SD</button>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -1,6 +1,7 @@
 // --- AetherStream Frontend Application Logic ---
 
 const API_BASE_URL = "http://127.0.0.1:5000/api";
+const STREAM_BASE_URL = "http://127.0.0.1:5000/stream";
 
 // Page Views Navigation
 const navItems = document.querySelectorAll(".nav-item");
@@ -59,6 +60,7 @@ async function checkSystemHealth() {
     const indicator = document.getElementById("system-status-indicator");
     const statusText = document.getElementById("system-status-text");
     const nodeStatus = document.getElementById("node-upload-api-status");
+    const nodeTranscoder = document.getElementById("node-transcoder-status");
 
     try {
         const response = await fetch(`${API_BASE_URL}/health`);
@@ -73,6 +75,9 @@ async function checkSystemHealth() {
         // Node Status Details Update
         nodeStatus.innerHTML = `<span style="color: var(--accent-green)">Online</span> (${(data.max_file_size_bytes / (1024*1024)).toFixed(0)}MB limit)`;
         
+        // Mark FFmpeg Transcoder status active in ecosystem view
+        nodeTranscoder.innerHTML = `<span style="color: var(--accent-green)">Active Worker Pool</span>`;
+        
         return true;
     } catch (error) {
         console.error("Health check error:", error);
@@ -80,10 +85,14 @@ async function checkSystemHealth() {
         indicator.className = "status-indicator offline";
         statusText.innerText = "Backend Offline";
         nodeStatus.innerHTML = `<span style="color: var(--accent-red)">Offline</span> (Connection failed)`;
+        nodeTranscoder.innerHTML = `<span style="color: var(--text-secondary)">Offline (No active worker)</span>`;
         
         return false;
     }
 }
+
+// Global Polling state to prevent overlapping intervals
+let libraryPollingTimeout = null;
 
 // Media Library Ingestion Display
 async function fetchLibrary() {
@@ -97,11 +106,12 @@ async function fetchLibrary() {
 
         const videos = await response.json();
         
-        // Update Dashboard Stats Counters
-        const completedVideos = videos.filter(v => v.status === 'completed');
-        const activeJobs = videos.filter(v => v.status === 'initiated' || v.status === 'uploading');
-        totalCompletedLabel.innerText = completedVideos.length;
-        totalJobsLabel.innerText = activeJobs.length;
+        // Update Dashboard Stats Counters (transcode metrics)
+        const completedTranscodes = videos.filter(v => v.transcode_status === 'completed');
+        const activeTranscodeJobs = videos.filter(v => v.transcode_status === 'pending' || v.transcode_status === 'processing');
+        
+        totalCompletedLabel.innerText = completedTranscodes.length;
+        totalJobsLabel.innerText = activeTranscodeJobs.length;
 
         if (videos.length === 0) {
             tableBody.innerHTML = `<tr><td colspan="6" class="table-empty">No video assets found in registry.</td></tr>`;
@@ -113,45 +123,135 @@ async function fetchLibrary() {
             const date = new Date(video.created_at + 'Z').toLocaleString();
             const sizeInMB = (video.file_size / (1024 * 1024)).toFixed(2);
             
-            // Shorten UUID
-            const shortId = `${video.video_id.substring(0, 8)}...`;
-            
-            // Progress Bar render logic
-            let progressHtml = "";
+            // Upload progress cell
+            let uploadHtml = "";
             if (video.status === 'completed') {
-                progressHtml = `
-                    <div class="table-progress-bar">
-                        <div class="table-progress-fill" style="width: 100%"></div>
-                    </div>
-                    <span>100%</span>
-                `;
+                uploadHtml = `<span class="badge badge-completed"><i class="fa-solid fa-circle-check"></i> Merged</span>`;
             } else if (video.status === 'failed') {
-                progressHtml = `
-                    <div class="table-progress-bar">
-                        <div class="table-progress-fill" style="width: 0%; background: var(--accent-red)"></div>
-                    </div>
-                    <span>0%</span>
-                `;
+                uploadHtml = `<span class="badge badge-failed"><i class="fa-solid fa-circle-xmark"></i> Failed</span>`;
             } else {
-                // Approximate from chunk count
-                progressHtml = `<span style="color: var(--text-secondary)">Pending upload</span>`;
+                uploadHtml = `<span class="badge badge-uploading"><i class="fa-solid fa-spinner fa-spin"></i> Ingesting</span>`;
+            }
+
+            // Transcode status cell
+            let transcodeHtml = "";
+            const tStatus = video.transcode_status || 'none';
+            const tProgress = video.transcode_progress || 0.0;
+
+            if (tStatus === 'completed') {
+                transcodeHtml = `<span class="badge-transcode completed"><i class="fa-solid fa-circle-check"></i> Ready</span>`;
+            } else if (tStatus === 'processing') {
+                transcodeHtml = `<span class="badge-transcode processing"><i class="fa-solid fa-gear fa-spin"></i> Processing (${tProgress.toFixed(1)}%)</span>`;
+            } else if (tStatus === 'pending') {
+                transcodeHtml = `<span class="badge-transcode pending"><i class="fa-solid fa-hourglass-start"></i> Queued</span>`;
+            } else if (tStatus === 'failed') {
+                transcodeHtml = `<span class="badge-transcode failed"><i class="fa-solid fa-circle-xmark"></i> Failed</span>`;
+            } else {
+                transcodeHtml = `<span class="badge-transcode none"><i class="fa-solid fa-clock-rotate-left"></i> Not Started</span>`;
+            }
+
+            // Action triggers
+            let actionsHtml = "-";
+            if (tStatus === 'completed') {
+                // Escape filename characters
+                const safeFilename = video.filename.replace(/'/g, "\\'");
+                actionsHtml = `
+                    <button class="btn-play" onclick="playVideo('${video.video_id}', '${safeFilename}')">
+                        <i class="fa-solid fa-play"></i> Play Stream
+                    </button>
+                `;
             }
 
             return `
                 <tr>
-                    <td style="font-family: monospace; font-size: 0.8rem;" title="${video.video_id}">${shortId}</td>
-                    <td style="font-weight: 500;">${video.filename}</td>
+                    <td style="font-weight: 500;">
+                        ${video.filename}
+                        <div style="font-family: monospace; font-size: 0.75rem; color: var(--text-secondary); margin-top: 4px;">ID: ${video.video_id}</div>
+                    </td>
                     <td>${sizeInMB} MB</td>
-                    <td>${progressHtml}</td>
-                    <td><span class="badge badge-${video.status}">${video.status}</span></td>
+                    <td>${uploadHtml}</td>
+                    <td>${transcodeHtml}</td>
                     <td style="color: var(--text-secondary);">${date}</td>
+                    <td>${actionsHtml}</td>
                 </tr>
             `;
         }).join("");
 
+        // Active transcoding automatic polling loop setup
+        if (activeTranscodeJobs.length > 0) {
+            console.log("[*] Running jobs detected. Spawning transcoding status check...");
+            if (libraryPollingTimeout) clearTimeout(libraryPollingTimeout);
+            libraryPollingTimeout = setTimeout(fetchLibrary, 3000);
+        }
+
     } catch (error) {
         console.error("Library load error:", error);
         tableBody.innerHTML = `<tr><td colspan="6" class="table-empty" style="color: var(--accent-red)">Error querying asset registry. Is the server running?</td></tr>`;
+    }
+}
+
+// Global active video streaming state
+let activeVideoId = null;
+
+// Video player controller function
+window.playVideo = function(videoId, filename) {
+    activeVideoId = videoId;
+    
+    const playerCard = document.getElementById("video-player-card");
+    const playerTitle = document.getElementById("player-video-title");
+    const playerVideo = document.getElementById("video-player");
+    
+    // Unhide card and load title
+    playerCard.classList.remove("hidden");
+    playerTitle.innerText = `Stream Quality Player: ${filename}`;
+    
+    // Set poster thumbnail URL from static stream endpoint
+    playerVideo.poster = `${STREAM_BASE_URL}/${videoId}_thumb.jpg`;
+    
+    // Reset quality controls active state (Default to 720p)
+    document.getElementById("btn-quality-480p").classList.remove("active");
+    document.getElementById("btn-quality-720p").classList.add("active");
+    
+    // Set source URL and load player
+    playerVideo.src = `${STREAM_BASE_URL}/${videoId}_720p.mp4`;
+    playerVideo.load();
+    playerVideo.play().catch(err => {
+        console.log("[*] Autoplay blocked, waiting for user click interaction: ", err);
+    });
+    
+    // Smooth scroll down to video player
+    playerCard.scrollIntoView({ behavior: 'smooth' });
+};
+
+// Resolution Switch Controller
+function switchResolution(quality) {
+    if (!activeVideoId) return;
+    
+    const playerVideo = document.getElementById("video-player");
+    
+    // 1. Capture current playback timestamp and state to allow seamless transitions
+    const currentTime = playerVideo.currentTime;
+    const isPaused = playerVideo.paused;
+    
+    // 2. Set active quality button selector classes
+    if (quality === '720p') {
+        document.getElementById("btn-quality-480p").classList.remove("active");
+        document.getElementById("btn-quality-720p").classList.add("active");
+    } else {
+        document.getElementById("btn-quality-720p").classList.remove("active");
+        document.getElementById("btn-quality-480p").classList.add("active");
+    }
+    
+    // 3. Load the selected resolution stream
+    playerVideo.src = `${STREAM_BASE_URL}/${activeVideoId}_${quality}.mp4`;
+    playerVideo.load();
+    
+    // 4. Seek to the timestamp we captured
+    playerVideo.currentTime = currentTime;
+    
+    // 5. Restore playback state
+    if (!isPaused) {
+        playerVideo.play().catch(e => console.log("Play interrupted during seek: ", e));
     }
 }
 
@@ -186,6 +286,7 @@ dropZone.addEventListener("click", () => {
     }, false);
 });
 
+// Drag cleanup
 ['dragleave', 'drop'].forEach(eventName => {
     dropZone.addEventListener(eventName, (e) => {
         e.preventDefault();
@@ -405,7 +506,7 @@ async function completeUploadSession() {
         }
 
         console.log("[+] Merge complete:", data);
-        document.getElementById("upload-status-label").innerHTML = `<span style="color: var(--accent-green)">Upload complete and verified!</span>`;
+        document.getElementById("upload-status-label").innerHTML = `<span style="color: var(--accent-green)">Upload complete and queued for transcoding!</span>`;
         
         // Reset file selection
         selectedFile = null;
@@ -449,4 +550,19 @@ document.addEventListener("DOMContentLoaded", () => {
     
     // Regular health check interval
     setInterval(checkSystemHealth, 10000);
+    
+    // Video player close event handler
+    document.getElementById("btn-close-player").addEventListener("click", () => {
+        const playerVideo = document.getElementById("video-player");
+        playerVideo.pause();
+        document.getElementById("video-player-card").classList.add("hidden");
+    });
+    
+    // Quality selection switch events
+    document.getElementById("btn-quality-720p").addEventListener("click", () => {
+        switchResolution("720p");
+    });
+    document.getElementById("btn-quality-480p").addEventListener("click", () => {
+        switchResolution("480p");
+    });
 });
