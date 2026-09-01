@@ -17,6 +17,10 @@ class Config:
     HOST = os.getenv('HOST', '127.0.0.1')
     FFMPEG_PATH = os.getenv('FFMPEG_PATH', 'ffmpeg')
 
+    # Kafka & Analytics Stream configuration
+    KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
+    KAFKA_TOPIC_EVENTS = os.getenv('KAFKA_TOPIC_EVENTS', 'playback-events')
+
     # Storage paths
     # Resolve relative paths relative to BASE_DIR, keep absolute paths intact
     _temp_dir = os.getenv('UPLOAD_TEMP_DIR', 'storage/temp')
