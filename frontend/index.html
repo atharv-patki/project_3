@@ -589,6 +589,37 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Live Video Health & QoS Diagnostic Audit Card -->
+                <div class="dashboard-card" style="margin-top: 1.5rem;">
+                    <div class="chart-header">
+                        <div>
+                            <h3>Video Stream Health &amp; Diagnostic Audit</h3>
+                            <p class="card-subtitle">Automated SLA compliance, QoS Health Index (0–100), and proactive rebuffer alerting</p>
+                        </div>
+                        <div id="fleet-health-badge-container">
+                            <span class="badge-pill badge-green" id="fleet-health-summary-badge"><i class="fa-solid fa-circle-check"></i> System SLA: Optimal</span>
+                        </div>
+                    </div>
+                    <div class="table-responsive" style="margin-top: 1rem;">
+                        <table class="report-table">
+                            <thead>
+                                <tr>
+                                    <th>Video Asset</th>
+                                    <th>Viewers</th>
+                                    <th>Avg Buffer</th>
+                                    <th>Stall Rate</th>
+                                    <th>QoS Health Score</th>
+                                    <th>Status</th>
+                                    <th>Diagnostic Recommendation</th>
+                                </tr>
+                            </thead>
+                            <tbody id="report-diagnostics-table-body">
+                                <tr><td colspan="7" class="empty-message">Loading health diagnostics...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </section>
         </main>
     </div>

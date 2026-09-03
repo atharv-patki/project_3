@@ -1151,8 +1151,65 @@ async function fetchReportsData() {
                 }
             }
         }
+        // 6. Fetch Video Health Diagnostics
+        await fetchHealthDiagnostics();
     } catch (err) {
         console.error("Error fetching historical reports:", err);
+    }
+}
+
+async function fetchHealthDiagnostics() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/analytics/diagnostics`);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        const summary = data.fleet_health || {};
+        const diagList = data.diagnostics || [];
+        
+        // Update fleet SLA badge
+        const badgeContainer = document.getElementById("fleet-health-badge-container");
+        if (badgeContainer) {
+            if (summary.critical_alerts > 0) {
+                badgeContainer.innerHTML = `<span class="badge-pill badge-red"><i class="fa-solid fa-triangle-exclamation"></i> System SLA: Critical (${summary.critical_alerts} Alerts)</span>`;
+            } else if (summary.warning_alerts > 0) {
+                badgeContainer.innerHTML = `<span class="badge-pill badge-yellow"><i class="fa-solid fa-circle-exclamation"></i> System SLA: Attention Required (${summary.warning_alerts} Warnings)</span>`;
+            } else {
+                badgeContainer.innerHTML = `<span class="badge-pill badge-green"><i class="fa-solid fa-circle-check"></i> System SLA: Optimal (100% Nominal)</span>`;
+            }
+        }
+
+        // Render diagnostics table
+        const tbody = document.getElementById("report-diagnostics-table-body");
+        if (tbody) {
+            if (diagList.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="7" class="empty-message">No video assets evaluated yet.</td></tr>`;
+            } else {
+                tbody.innerHTML = diagList.map(d => {
+                    const badgeClass = d.status_class === 'optimal' ? 'badge-green' : (d.status_class === 'warning' ? 'badge-yellow' : 'badge-red');
+                    return `
+                        <tr>
+                            <td><strong>${d.video_id}</strong></td>
+                            <td>${d.unique_viewers.toLocaleString()}</td>
+                            <td>${d.avg_buffer_health}s</td>
+                            <td>${d.stall_rate_percent}%</td>
+                            <td>
+                                <div class="health-score-cell">
+                                    <div class="health-score-track">
+                                        <div class="health-score-bar ${d.status_class}" style="width: ${d.health_score}%;"></div>
+                                    </div>
+                                    <span class="health-score-val">${d.health_score}</span>
+                                </div>
+                            </td>
+                            <td><span class="badge-pill ${badgeClass}">${d.status}</span></td>
+                            <td><span style="font-size: 0.8rem; color: var(--text-secondary);">${d.recommendation}</span></td>
+                        </tr>
+                    `;
+                }).join("");
+            }
+        }
+    } catch (err) {
+        console.error("Failed to fetch health diagnostics:", err);
     }
 }
 

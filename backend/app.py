@@ -563,6 +563,26 @@ def create_app():
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
 
+    @app.route('/api/analytics/diagnostics', methods=['GET'])
+    def video_health_diagnostics():
+        """
+        Returns automated video health scorecards (0-100), SLA compliance status,
+        and proactive QoS diagnostic recommendations across all assets.
+        """
+        diagnostics = AnalyticsQueries.get_video_health_diagnostics()
+        critical_count = sum(1 for d in diagnostics if d['status'] == 'Critical')
+        warning_count = sum(1 for d in diagnostics if d['status'] == 'Warning')
+        
+        return jsonify({
+            "fleet_health": {
+                "total_assets_evaluated": len(diagnostics),
+                "critical_alerts": critical_count,
+                "warning_alerts": warning_count,
+                "system_status": "Degraded" if critical_count > 0 else ("Attention Required" if warning_count > 0 else "Optimal")
+            },
+            "diagnostics": diagnostics
+        }), 200
+
     return app
 
 if __name__ == '__main__':

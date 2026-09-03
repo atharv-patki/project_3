@@ -265,3 +265,79 @@ class AnalyticsQueries:
             return retention_points
         finally:
             conn.close()
+
+    @classmethod
+    def get_video_health_diagnostics(cls) -> List[Dict[str, Any]]:
+        """
+        Evaluates fleet-wide video health, computing QoS Health Index (0-100),
+        SLA compliance, and automated diagnostic recommendations.
+        """
+        conn = DatabaseManager.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    video_id,
+                    COUNT(*) AS event_count,
+                    COUNT(DISTINCT user_id) AS unique_viewers,
+                    COALESCE(AVG(buffer_health), 0.0) AS avg_buffer_health,
+                    COALESCE(AVG(bitrate_kbps), 0.0) AS avg_bitrate,
+                    COALESCE(SUM(CASE WHEN playback_state = 'buffering' THEN 1 ELSE 0 END), 0) AS stall_count
+                FROM telemetry_events
+                GROUP BY video_id
+                ORDER BY event_count DESC
+            """)
+            rows = cursor.fetchall()
+
+            diagnostics = []
+            for r in rows:
+                vid = r['video_id']
+                ev_cnt = r['event_count']
+                stalls = r['stall_count']
+                avg_buf = round(r['avg_buffer_health'], 2)
+                avg_bit = round(r['avg_bitrate'], 1)
+                stall_pct = round((stalls / ev_cnt * 100.0), 2) if ev_cnt > 0 else 0.0
+
+                # Health Score (0 - 100)
+                buf_penalty = 0.0
+                if avg_buf < 5.0:
+                    buf_penalty = (5.0 - avg_buf) * 6.0
+                elif avg_buf < 10.0:
+                    buf_penalty = (10.0 - avg_buf) * 2.0
+
+                stall_penalty = stall_pct * 12.0
+                health_score = int(max(0, min(100, round(100.0 - buf_penalty - stall_penalty))))
+
+                # Status & Alert Classification
+                if health_score >= 90 and stall_pct < 1.0:
+                    status = "Optimal"
+                    status_class = "optimal"
+                    recommendation = "Stream operating within nominal OTT SLAs."
+                elif health_score >= 70 and stall_pct <= 3.5:
+                    status = "Warning"
+                    status_class = "warning"
+                    if avg_buf < 10.0:
+                        recommendation = "Low buffer stability detected. Check CDN Edge distribution."
+                    else:
+                        recommendation = "Elevated rebuffer frequency observed. Monitor viewer network conditions."
+                else:
+                    status = "Critical"
+                    status_class = "critical"
+                    recommendation = "High stall rate (>3.5%). Consider adjusting ABR ladder downscaling thresholds."
+
+                diagnostics.append({
+                    "video_id": vid,
+                    "event_count": ev_cnt,
+                    "unique_viewers": r['unique_viewers'],
+                    "avg_buffer_health": avg_buf,
+                    "avg_bitrate_kbps": avg_bit,
+                    "stall_rate_percent": stall_pct,
+                    "health_score": health_score,
+                    "status": status,
+                    "status_class": status_class,
+                    "recommendation": recommendation
+                })
+
+            return diagnostics
+        finally:
+            conn.close()
