@@ -10,13 +10,15 @@ from security import verify_file_signature, CleanupWorker
 from worker import queue_transcode_job
 
 try:
-    from analytics_schema import validate_event, PlaybackEvent
-    from kafka_service import get_kafka_service
-    from traffic_generator import get_traffic_generator
-except ImportError:
     from backend.analytics_schema import validate_event, PlaybackEvent
     from backend.kafka_service import get_kafka_service
     from backend.traffic_generator import get_traffic_generator
+    from backend.analytics_consumer import get_analytics_consumer
+except ImportError:
+    from analytics_schema import validate_event, PlaybackEvent
+    from kafka_service import get_kafka_service
+    from traffic_generator import get_traffic_generator
+    from analytics_consumer import get_analytics_consumer
 
 # Allowed video extensions
 ALLOWED_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv'}
@@ -38,12 +40,16 @@ def create_app():
     # Enable CORS
     CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-    # Start background cleanup task (daemon thread)
+    # Start background cleanup and analytics consumer tasks (daemon threads)
     # Avoid duplicate threads during Flask reloader reload
     if not Config.DEBUG or os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
         # Default cleanup: check every 10 minutes, expire files after 2 hours
         cleanup_worker = CleanupWorker(expiry_seconds=7200, check_interval_seconds=600)
         cleanup_worker.start()
+
+        # Start real-time analytics streaming consumer
+        analytics_consumer = get_analytics_consumer()
+        analytics_consumer.start()
 
     # Generic Error Handlers
     @app.errorhandler(400)
@@ -441,6 +447,15 @@ def create_app():
         """
         generator = get_traffic_generator()
         return jsonify(generator.get_status()), 200
+
+    @app.route('/api/analytics/realtime', methods=['GET'])
+    def analytics_realtime():
+        """
+        Returns real-time aggregated streaming KPIs:
+        concurrent active viewers, average buffer health, QoS stall rates, quality breakdown, and time-series points.
+        """
+        consumer = get_analytics_consumer()
+        return jsonify(consumer.get_realtime_metrics()), 200
 
     return app
 
