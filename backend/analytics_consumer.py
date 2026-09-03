@@ -46,10 +46,16 @@ class MetricsAggregator:
         self._time_series: deque = deque(maxlen=max_time_series_points)
         self._last_point_time = 0
 
-    def ingest_event(self, event: Dict[str, Any]):
+    def ingest_event(self, event: Any):
         """
         Process a single telemetry event into the real-time aggregation model.
+        Supports both dict and PlaybackEvent dataclass instances.
         """
+        if hasattr(event, "to_dict"):
+            event = event.to_dict()
+        elif hasattr(event, "__dict__"):
+            event = event.__dict__
+
         now = time.time()
         session_id = event.get("session_id") or event.get("user_id")
         if not session_id:
