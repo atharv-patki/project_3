@@ -190,13 +190,128 @@ async function fetchLibrary() {
     }
 }
 
-// Global active video streaming state
+// Global active video streaming & telemetry state
 let activeVideoId = null;
+let currentSessionId = null;
+let currentQuality = "720p";
+let telemetryHeartbeatTimer = null;
+let totalTelemetryPings = 0;
+
+// Persistent User ID for telemetry sessions
+function getOrCreateUserId() {
+    let uid = localStorage.getItem("aether_user_id");
+    if (!uid) {
+        uid = "usr_" + Math.random().toString(36).substring(2, 10);
+        localStorage.setItem("aether_user_id", uid);
+    }
+    return uid;
+}
+
+// Calculate buffer health (seconds of video buffer ahead of current playhead)
+function calculateBufferHealth(video) {
+    if (!video || !video.buffered || video.buffered.length === 0) return 0.0;
+    const curTime = video.currentTime;
+    for (let i = 0; i < video.buffered.length; i++) {
+        const start = video.buffered.start(i);
+        const end = video.buffered.end(i);
+        if (start <= curTime && curTime <= end) {
+            return Math.max(0, +(end - curTime).toFixed(2));
+        }
+    }
+    return 0.0;
+}
+
+// Update Telemetry HUD metrics
+function updateTelemetryHUD(bufferHealth, state) {
+    const bufferLabel = document.getElementById("telemetry-buffer-val");
+    const stateLabel = document.getElementById("telemetry-state-val");
+    const statusLabel = document.getElementById("telemetry-status-label");
+    const pulseIndicator = document.querySelector(".telemetry-pulse");
+
+    if (bufferLabel) bufferLabel.innerText = `${bufferHealth.toFixed(1)}s`;
+    if (stateLabel) stateLabel.innerText = state.charAt(0).toUpperCase() + state.slice(1);
+    
+    if (pulseIndicator) {
+        if (state === "playing" || state === "buffering") {
+            pulseIndicator.classList.remove("paused");
+            if (statusLabel) statusLabel.innerText = "Telemetry: Active (1s heartbeat)";
+        } else {
+            pulseIndicator.classList.add("paused");
+            if (statusLabel) statusLabel.innerText = "Telemetry: Idle (Paused)";
+        }
+    }
+}
+
+// Emit Telemetry Heartbeat / State Change event
+async function emitTelemetryEvent(overrideState = null) {
+    const video = document.getElementById("video-player");
+    if (!video || !activeVideoId || !currentSessionId) return;
+
+    const bufferHealth = calculateBufferHealth(video);
+    let state = overrideState;
+    if (!state) {
+        if (video.ended) state = "ended";
+        else if (video.seeking) state = "seeking";
+        else if (video.paused) state = "paused";
+        else if (video.readyState < 3) state = "buffering";
+        else state = "playing";
+    }
+
+    const payload = {
+        user_id: getOrCreateUserId(),
+        video_id: activeVideoId,
+        session_id: currentSessionId,
+        timestamp: Date.now() / 1000,
+        watch_time_seconds: +video.currentTime.toFixed(2),
+        playback_quality: currentQuality,
+        buffer_health: bufferHealth,
+        playback_state: state,
+        device_type: "web",
+        bitrate_kbps: currentQuality === "720p" ? 2500 : 1000
+    };
+
+    updateTelemetryHUD(bufferHealth, state);
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/analytics/event`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        if (response.ok) {
+            totalTelemetryPings++;
+            const pingsLabel = document.getElementById("telemetry-pings-val");
+            if (pingsLabel) pingsLabel.innerText = totalTelemetryPings;
+        }
+    } catch (err) {
+        console.warn("[*] Telemetry emit failed:", err);
+    }
+}
+
+function startTelemetryHeartbeat() {
+    if (telemetryHeartbeatTimer) clearInterval(telemetryHeartbeatTimer);
+    telemetryHeartbeatTimer = setInterval(() => {
+        emitTelemetryEvent();
+    }, 1000);
+}
+
+function stopTelemetryHeartbeat() {
+    if (telemetryHeartbeatTimer) {
+        clearInterval(telemetryHeartbeatTimer);
+        telemetryHeartbeatTimer = null;
+    }
+}
 
 // Video player controller function
 window.playVideo = function(videoId, filename) {
     activeVideoId = videoId;
+    currentSessionId = "sess_" + Math.random().toString(36).substring(2, 11);
+    currentQuality = "720p";
+    totalTelemetryPings = 0;
     
+    const pingsLabel = document.getElementById("telemetry-pings-val");
+    if (pingsLabel) pingsLabel.innerText = "0";
+
     const playerCard = document.getElementById("video-player-card");
     const playerTitle = document.getElementById("player-video-title");
     const playerVideo = document.getElementById("video-player");
@@ -218,6 +333,10 @@ window.playVideo = function(videoId, filename) {
     playerVideo.play().catch(err => {
         console.log("[*] Autoplay blocked, waiting for user click interaction: ", err);
     });
+
+    // Start telemetry heartbeat timer
+    startTelemetryHeartbeat();
+    emitTelemetryEvent("playing");
     
     // Smooth scroll down to video player
     playerCard.scrollIntoView({ behavior: 'smooth' });
@@ -226,6 +345,7 @@ window.playVideo = function(videoId, filename) {
 // Resolution Switch Controller
 function switchResolution(quality) {
     if (!activeVideoId) return;
+    currentQuality = quality;
     
     const playerVideo = document.getElementById("video-player");
     
@@ -253,6 +373,9 @@ function switchResolution(quality) {
     if (!isPaused) {
         playerVideo.play().catch(e => console.log("Play interrupted during seek: ", e));
     }
+
+    // Emit resolution switch telemetry event
+    emitTelemetryEvent(isPaused ? "paused" : "playing");
 }
 
 // Drag & Drop / File Selection UI Elements
@@ -551,9 +674,12 @@ document.addEventListener("DOMContentLoaded", () => {
     // Regular health check interval
     setInterval(checkSystemHealth, 10000);
     
+    const playerVideo = document.getElementById("video-player");
+
     // Video player close event handler
     document.getElementById("btn-close-player").addEventListener("click", () => {
-        const playerVideo = document.getElementById("video-player");
+        stopTelemetryHeartbeat();
+        emitTelemetryEvent("ended");
         playerVideo.pause();
         document.getElementById("video-player-card").classList.add("hidden");
     });
@@ -564,5 +690,32 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     document.getElementById("btn-quality-480p").addEventListener("click", () => {
         switchResolution("480p");
+    });
+
+    // HTML5 Video Player Telemetry Event Listeners
+    playerVideo.addEventListener("play", () => {
+        startTelemetryHeartbeat();
+        emitTelemetryEvent("playing");
+    });
+
+    playerVideo.addEventListener("pause", () => {
+        emitTelemetryEvent("paused");
+    });
+
+    playerVideo.addEventListener("waiting", () => {
+        emitTelemetryEvent("buffering");
+    });
+
+    playerVideo.addEventListener("seeking", () => {
+        emitTelemetryEvent("seeking");
+    });
+
+    playerVideo.addEventListener("seeked", () => {
+        emitTelemetryEvent(playerVideo.paused ? "paused" : "playing");
+    });
+
+    playerVideo.addEventListener("ended", () => {
+        stopTelemetryHeartbeat();
+        emitTelemetryEvent("ended");
     });
 });

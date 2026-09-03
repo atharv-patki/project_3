@@ -272,6 +272,26 @@
                                 <button class="btn btn-quality" id="btn-quality-480p" data-quality="480p">480p SD</button>
                             </div>
                         </div>
+
+                        <!-- Real-time Telemetry Sensor HUD -->
+                        <div class="telemetry-hud" id="telemetry-hud">
+                            <div class="telemetry-pill">
+                                <span class="telemetry-pulse"></span>
+                                <span id="telemetry-status-label">Telemetry: Active (1s heartbeat)</span>
+                            </div>
+                            <div class="telemetry-metric">
+                                <i class="fa-solid fa-layer-group icon-cyan"></i>
+                                <span>Buffer: <strong id="telemetry-buffer-val">0.0s</strong></span>
+                            </div>
+                            <div class="telemetry-metric">
+                                <i class="fa-solid fa-tower-broadcast icon-purple"></i>
+                                <span>State: <strong id="telemetry-state-val">Idle</strong></span>
+                            </div>
+                            <div class="telemetry-metric">
+                                <i class="fa-solid fa-paper-plane icon-green"></i>
+                                <span>Pings: <strong id="telemetry-pings-val">0</strong></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
