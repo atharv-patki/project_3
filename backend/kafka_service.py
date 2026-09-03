@@ -4,8 +4,12 @@ import queue
 import threading
 from collections import defaultdict
 from typing import Dict, Any, List, Optional, Union
-from backend.config import Config
-from backend.analytics_schema import PlaybackEvent
+try:
+    from config import Config
+    from analytics_schema import PlaybackEvent
+except ImportError:
+    from backend.config import Config
+    from backend.analytics_schema import PlaybackEvent
 
 logger = logging.getLogger(__name__)
 

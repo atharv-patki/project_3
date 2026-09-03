@@ -1,5 +1,6 @@
 import os
 import math
+import time
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from config import Config
@@ -7,6 +8,13 @@ from database import DatabaseManager
 from storage_service import StorageService
 from security import verify_file_signature, CleanupWorker
 from worker import queue_transcode_job
+
+try:
+    from analytics_schema import validate_event, PlaybackEvent
+    from kafka_service import get_kafka_service
+except ImportError:
+    from backend.analytics_schema import validate_event, PlaybackEvent
+    from backend.kafka_service import get_kafka_service
 
 # Allowed video extensions
 ALLOWED_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv'}
@@ -284,6 +292,104 @@ def create_app():
             return send_from_directory(Config.UPLOAD_FINAL_DIR, filename)
         except FileNotFoundError:
             return jsonify({"error": "File not found."}), 404
+
+    # -------------------------------------------------------------
+    # Real-Time Streaming Analytics & Telemetry Ingestion Endpoints
+    # -------------------------------------------------------------
+    @app.route('/api/analytics/event', methods=['POST'])
+    def ingest_event():
+        """
+        Ingests a single video viewer telemetry heartbeat event.
+        Validates the schema and publishes the event to the Kafka message broker.
+        """
+        payload = request.get_json(silent=True)
+        if not payload or not isinstance(payload, dict):
+            return jsonify({"error": "Bad Request", "message": "Missing or invalid JSON payload."}), 400
+
+        # Auto-detect client IP if not supplied
+        if 'client_ip' not in payload or not payload['client_ip']:
+            payload['client_ip'] = request.headers.get('X-Forwarded-For', request.remote_addr)
+
+        try:
+            event = validate_event(payload)
+        except ValueError as val_err:
+            return jsonify({"error": "Validation Error", "message": str(val_err)}), 400
+
+        broker = get_kafka_service()
+        published = broker.publish_event(event)
+
+        if not published:
+            return jsonify({"error": "Broker Error", "message": "Failed to enqueue telemetry event."}), 503
+
+        return jsonify({
+            "status": "accepted",
+            "session_id": event.session_id,
+            "video_id": event.video_id,
+            "received_at": time.time()
+        }), 202
+
+    @app.route('/api/analytics/events/batch', methods=['POST'])
+    def ingest_batch_events():
+        """
+        High-throughput batch ingestion for video player telemetry events.
+        Accepts a JSON array of events or an object with an 'events' list.
+        """
+        body = request.get_json(silent=True)
+        if body is None:
+            return jsonify({"error": "Bad Request", "message": "Missing JSON payload."}), 400
+
+        if isinstance(body, dict):
+            raw_events = body.get("events", [])
+        elif isinstance(body, list):
+            raw_events = body
+        else:
+            return jsonify({"error": "Bad Request", "message": "Batch payload must be a JSON array or object with an 'events' list."}), 400
+
+        if not raw_events or not isinstance(raw_events, list):
+            return jsonify({"error": "Bad Request", "message": "Batch cannot be empty."}), 400
+
+        if len(raw_events) > 5000:
+            return jsonify({"error": "Payload Too Large", "message": "Batch size exceeds maximum limit of 5000 events."}), 413
+
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+        validated_events = []
+        validation_errors = []
+
+        for idx, item in enumerate(raw_events):
+            if isinstance(item, dict):
+                if 'client_ip' not in item or not item['client_ip']:
+                    item['client_ip'] = client_ip
+            try:
+                evt = validate_event(item)
+                validated_events.append(evt)
+            except ValueError as err:
+                validation_errors.append({"index": idx, "error": str(err)})
+
+        if not validated_events and validation_errors:
+            return jsonify({
+                "error": "Validation Error",
+                "message": "All events in batch failed schema validation.",
+                "errors": validation_errors[:10]
+            }), 400
+
+        broker = get_kafka_service()
+        ingested_count = broker.publish_batch(validated_events)
+
+        return jsonify({
+            "status": "accepted",
+            "ingested_count": ingested_count,
+            "rejected_count": len(validation_errors),
+            "errors": validation_errors[:10] if validation_errors else [],
+            "received_at": time.time()
+        }), 202
+
+    @app.route('/api/analytics/status', methods=['GET'])
+    def analytics_status():
+        """
+        Returns real-time status, health, and throughput metrics of the telemetry message broker.
+        """
+        broker = get_kafka_service()
+        return jsonify(broker.get_status()), 200
 
     return app
 
