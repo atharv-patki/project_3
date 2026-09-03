@@ -498,6 +498,51 @@
                     </div>
                 </div>
 
+                <!-- Interactive Analytical Visualizers Grid -->
+                <div class="analytics-grid" style="margin-bottom: 1.5rem;">
+                    <!-- Historical QoS & Viewer Trendline Chart Card -->
+                    <div class="dashboard-card chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <h3>Historical QoS &amp; Active Viewers Trendline</h3>
+                                <p class="card-subtitle">Active viewers trajectory (purple) and average buffer depth (cyan)</p>
+                            </div>
+                            <div class="chart-legend">
+                                <div class="legend-item">
+                                    <span class="legend-dot" style="background: #a855f7;"></span>
+                                    <span>Active Viewers</span>
+                                </div>
+                                <div class="legend-item">
+                                    <span class="legend-dot" style="background: #06b6d4;"></span>
+                                    <span>Avg Buffer (s)</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="report-timeseries-chart" height="190"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Audience Retention & Drop-Off Curve Card -->
+                    <div class="dashboard-card chart-card">
+                        <div class="chart-header">
+                            <div>
+                                <h3>Audience Retention &amp; Drop-Off Curve</h3>
+                                <p class="card-subtitle">Viewer completion decay across video playback timeline (100% to 0%)</p>
+                            </div>
+                            <div class="chart-legend">
+                                <div class="legend-item">
+                                    <span class="legend-dot" style="background: #10b981;"></span>
+                                    <span>Retention Rate (%)</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="report-retention-chart" height="190"></canvas>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Detailed Breakdown Slices -->
                 <div class="analytics-grid">
                     <!-- Resolution Breakdown Table Card -->

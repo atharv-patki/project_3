@@ -1077,7 +1077,38 @@ async function fetchReportsData() {
             if (aBuffer) aBuffer.innerText = `${(sumData.avg_buffer_health_seconds || 0).toFixed(1)}s`;
         }
 
-        // 2. Fetch Quality Breakdown
+        // 2. Fetch Timeseries Wave Data
+        const activeRangeBtn = document.querySelector(".btn-time-range.active");
+        const range = activeRangeBtn ? activeRangeBtn.getAttribute("data-range") : "15m";
+        const intervalSec = (range === "all" || range === "24h") ? 300 : 60;
+
+        const resTimeseries = await fetch(`${API_BASE_URL}/analytics/historical/timeseries?${queryParams.toString()}&interval_seconds=${intervalSec}`);
+        if (resTimeseries.ok) {
+            const tsData = await resTimeseries.json();
+            renderReportsTimeseriesChart(tsData);
+        }
+
+        // 3. Fetch Retention Curve (uses active video or top asset)
+        let targetVideoForRetention = videoId;
+        if (!targetVideoForRetention) {
+            const filterEl = document.getElementById("report-video-filter");
+            if (filterEl && filterEl.options.length > 1) {
+                targetVideoForRetention = filterEl.options[1].value;
+            }
+        }
+        if (!targetVideoForRetention) {
+            targetVideoForRetention = "vid_matrix";
+        }
+
+        if (targetVideoForRetention) {
+            const resRetention = await fetch(`${API_BASE_URL}/analytics/historical/retention?video_id=${targetVideoForRetention}&bucket_seconds=15`);
+            if (resRetention.ok) {
+                const retData = await resRetention.json();
+                renderReportsRetentionChart(retData, targetVideoForRetention);
+            }
+        }
+
+        // 4. Fetch Quality Breakdown
         const resQuality = await fetch(`${API_BASE_URL}/analytics/historical/breakdown?dimension=playback_quality&${queryParams.toString()}`);
         if (resQuality.ok) {
             const qList = await resQuality.json();
@@ -1099,7 +1130,7 @@ async function fetchReportsData() {
             }
         }
 
-        // 3. Fetch Device Breakdown
+        // 5. Fetch Device Breakdown
         const resDevice = await fetch(`${API_BASE_URL}/analytics/historical/breakdown?dimension=device_type&${queryParams.toString()}`);
         if (resDevice.ok) {
             const dList = await resDevice.json();
@@ -1125,21 +1156,260 @@ async function fetchReportsData() {
     }
 }
 
+function renderReportsTimeseriesChart(series) {
+    const canvas = document.getElementById("report-timeseries-chart");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width || (canvas.parentElement ? canvas.parentElement.clientWidth : 500);
+    const height = rect.height || 200;
+
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (!series || series.length === 0) {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+        ctx.font = "12px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("No time-series telemetry data available for selected filter.", width / 2, height / 2);
+        return;
+    }
+
+    const padding = { top: 25, right: 30, bottom: 30, left: 45 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+
+    // Draw horizontal gridlines
+    const gridLines = 4;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+    ctx.lineWidth = 1;
+    ctx.font = "10px Inter, sans-serif";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.textAlign = "right";
+
+    const maxViewers = Math.max(10, ...series.map(s => s.active_viewers || 0));
+    const maxBuffer = Math.max(20, ...series.map(s => s.avg_buffer_health || 0));
+
+    for (let i = 0; i <= gridLines; i++) {
+        const y = padding.top + (chartH / gridLines) * i;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(width - padding.right, y);
+        ctx.stroke();
+
+        const vVal = Math.round(maxViewers * (1 - i / gridLines));
+        ctx.fillText(vVal.toString(), padding.left - 8, y + 3);
+    }
+
+    const n = series.length;
+    const getX = (idx) => padding.left + (n === 1 ? chartW / 2 : (chartW / (n - 1)) * idx);
+    const getYViewers = (val) => padding.top + chartH - (val / maxViewers) * chartH;
+    const getYBuffer = (val) => padding.top + chartH - (val / maxBuffer) * chartH;
+
+    // 1. Draw Active Viewers Area Fill & Curve (Purple)
+    const viewerGradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartH);
+    viewerGradient.addColorStop(0, "rgba(168, 85, 247, 0.35)");
+    viewerGradient.addColorStop(1, "rgba(168, 85, 247, 0.0)");
+
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getYViewers(series[0].active_viewers || 0));
+    for (let i = 1; i < n; i++) {
+        const xc = (getX(i) + getX(i - 1)) / 2;
+        const yc = (getYViewers(series[i].active_viewers || 0) + getYViewers(series[i - 1].active_viewers || 0)) / 2;
+        ctx.quadraticCurveTo(getX(i - 1), getYViewers(series[i - 1].active_viewers || 0), xc, yc);
+    }
+    ctx.lineTo(getX(n - 1), getYViewers(series[n - 1].active_viewers || 0));
+    ctx.lineTo(getX(n - 1), padding.top + chartH);
+    ctx.lineTo(getX(0), padding.top + chartH);
+    ctx.closePath();
+    ctx.fillStyle = viewerGradient;
+    ctx.fill();
+
+    // Viewers Line Stroke
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getYViewers(series[0].active_viewers || 0));
+    for (let i = 1; i < n; i++) {
+        const xc = (getX(i) + getX(i - 1)) / 2;
+        const yc = (getYViewers(series[i].active_viewers || 0) + getYViewers(series[i - 1].active_viewers || 0)) / 2;
+        ctx.quadraticCurveTo(getX(i - 1), getYViewers(series[i - 1].active_viewers || 0), xc, yc);
+    }
+    ctx.lineTo(getX(n - 1), getYViewers(series[n - 1].active_viewers || 0));
+    ctx.strokeStyle = "#a855f7";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    // 2. Draw Avg Buffer Line (Cyan)
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getYBuffer(series[0].avg_buffer_health || 0));
+    for (let i = 1; i < n; i++) {
+        const xc = (getX(i) + getX(i - 1)) / 2;
+        const yc = (getYBuffer(series[i].avg_buffer_health || 0) + getYBuffer(series[i - 1].avg_buffer_health || 0)) / 2;
+        ctx.quadraticCurveTo(getX(i - 1), getYBuffer(series[i - 1].avg_buffer_health || 0), xc, yc);
+    }
+    ctx.lineTo(getX(n - 1), getYBuffer(series[n - 1].avg_buffer_health || 0));
+    ctx.strokeStyle = "#06b6d4";
+    ctx.lineWidth = 2.0;
+    ctx.stroke();
+
+    // Time Labels along X-Axis
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+    const step = Math.max(1, Math.floor(n / 6));
+    for (let i = 0; i < n; i += step) {
+        ctx.fillText(series[i].time_label || "", getX(i), height - 8);
+    }
+}
+
+function renderReportsRetentionChart(retention) {
+    const canvas = document.getElementById("report-retention-chart");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width || (canvas.parentElement ? canvas.parentElement.clientWidth : 500);
+    const height = rect.height || 200;
+
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (!retention || retention.length === 0) {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+        ctx.font = "12px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Select a video asset above to display audience retention curve.", width / 2, height / 2);
+        return;
+    }
+
+    const padding = { top: 25, right: 30, bottom: 30, left: 45 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+
+    // Gridlines for 100%, 75%, 50%, 25%, 0%
+    const levels = [100, 75, 50, 25, 0];
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+    ctx.lineWidth = 1;
+    ctx.font = "10px Inter, sans-serif";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.textAlign = "right";
+
+    levels.forEach(pct => {
+        const y = padding.top + chartH * (1 - pct / 100);
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(width - padding.right, y);
+        ctx.stroke();
+        ctx.fillText(`${pct}%`, padding.left - 8, y + 3);
+    });
+
+    const n = retention.length;
+    const getX = (idx) => padding.left + (n === 1 ? chartW / 2 : (chartW / (n - 1)) * idx);
+    const getY = (pct) => padding.top + chartH * (1 - pct / 100);
+
+    // Retention Gradient Fill (Emerald Green)
+    const retGradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartH);
+    retGradient.addColorStop(0, "rgba(16, 185, 129, 0.35)");
+    retGradient.addColorStop(1, "rgba(16, 185, 129, 0.0)");
+
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getY(retention[0].retention_rate_percent));
+    for (let i = 1; i < n; i++) {
+        const xc = (getX(i) + getX(i - 1)) / 2;
+        const yc = (getY(retention[i].retention_rate_percent) + getY(retention[i - 1].retention_rate_percent)) / 2;
+        ctx.quadraticCurveTo(getX(i - 1), getY(retention[i - 1].retention_rate_percent), xc, yc);
+    }
+    ctx.lineTo(getX(n - 1), getY(retention[n - 1].retention_rate_percent));
+    ctx.lineTo(getX(n - 1), padding.top + chartH);
+    ctx.lineTo(getX(0), padding.top + chartH);
+    ctx.closePath();
+    ctx.fillStyle = retGradient;
+    ctx.fill();
+
+    // Retention Stroke Line
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getY(retention[0].retention_rate_percent));
+    for (let i = 1; i < n; i++) {
+        const xc = (getX(i) + getX(i - 1)) / 2;
+        const yc = (getY(retention[i].retention_rate_percent) + getY(retention[i - 1].retention_rate_percent)) / 2;
+        ctx.quadraticCurveTo(getX(i - 1), getY(retention[i - 1].retention_rate_percent), xc, yc);
+    }
+    ctx.lineTo(getX(n - 1), getY(retention[n - 1].retention_rate_percent));
+    ctx.strokeStyle = "#10b981";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    // Draw milestone dots along curve
+    ctx.fillStyle = "#10b981";
+    for (let i = 0; i < n; i++) {
+        const x = getX(i);
+        const y = getY(retention[i].retention_rate_percent);
+        ctx.beginPath();
+        ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // Time Labels on X axis
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+    const step = Math.max(1, Math.floor(n / 6));
+    for (let i = 0; i < n; i += step) {
+        ctx.fillText(retention[i].time_label || `${retention[i].time_seconds}s`, getX(i), height - 8);
+    }
+
+    // Title label in chart
+    if (videoId) {
+        ctx.font = "10px Inter, sans-serif";
+        ctx.fillStyle = "rgba(16, 185, 129, 0.8)";
+        ctx.textAlign = "right";
+        ctx.fillText(`Asset: ${videoId}`, width - padding.right, padding.top - 8);
+    }
+}
+
 async function populateReportVideoFilter() {
     const select = document.getElementById("report-video-filter");
     if (!select) return;
 
     try {
-        const res = await fetch(`${API_BASE_URL}/videos`);
-        if (!res.ok) return;
-        const videos = await res.json();
-        
         const curVal = select.value;
-        select.innerHTML = `<option value="">All Video Assets (${videos.length})</option>`;
-        videos.forEach(v => {
+        const videoMap = new Map();
+
+        // 1. Fetch library videos
+        try {
+            const resLib = await fetch(`${API_BASE_URL}/videos`);
+            if (resLib.ok) {
+                const vList = await resLib.json();
+                vList.forEach(v => videoMap.set(v.video_id, `${v.filename} (${v.video_id.substring(0, 8)})`));
+            }
+        } catch (e) {}
+
+        // 2. Fetch warehouse videos
+        try {
+            const resWh = await fetch(`${API_BASE_URL}/analytics/historical/breakdown?dimension=video_id`);
+            if (resWh.ok) {
+                const whList = await resWh.json();
+                whList.forEach(w => {
+                    if (!videoMap.has(w.dimension_value)) {
+                        videoMap.set(w.dimension_value, `${w.dimension_value} (${w.event_count} events)`);
+                    }
+                });
+            }
+        } catch (e) {}
+
+        select.innerHTML = `<option value="">All Video Assets (${videoMap.size})</option>`;
+        videoMap.forEach((label, vid) => {
             const opt = document.createElement("option");
-            opt.value = v.video_id;
-            opt.innerText = `${v.filename} (${v.video_id.substring(0, 8)})`;
+            opt.value = vid;
+            opt.innerText = label;
             select.appendChild(opt);
         });
         select.value = curVal;

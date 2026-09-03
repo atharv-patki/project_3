@@ -1,6 +1,10 @@
 import sqlite3
 from pathlib import Path
-from config import Config
+
+try:
+    from backend.config import Config
+except ImportError:
+    from config import Config
 
 class DatabaseManager:
     @classmethod
