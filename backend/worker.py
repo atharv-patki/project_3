@@ -4,8 +4,15 @@ import threading
 import sys
 import traceback
 from pathlib import Path
-from database import DatabaseManager
-from transcoder_service import TranscoderService
+
+try:
+    from database import DatabaseManager
+    from transcoder_service import TranscoderService
+    from config import Config
+except ImportError:
+    from backend.database import DatabaseManager
+    from backend.transcoder_service import TranscoderService
+    from backend.config import Config
 
 # Thread-safe worker queue for video transcoding jobs
 transcode_queue = queue.Queue()

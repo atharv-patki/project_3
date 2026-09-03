@@ -128,11 +128,20 @@ class TranscoderService:
         return cls._run_ffmpeg_command(args, duration, progress_callback)
 
     @classmethod
-    def extract_thumbnail(cls, input_path: str, output_path: str) -> str:
-        """Extract a single frame image (JPEG format) from the video's 5-second mark."""
+    def extract_thumbnail(cls, input_path: str, output_path: str, time_offset_seconds: float = 5.0) -> str:
+        """Extract a single frame image (JPEG format) from the video."""
+        duration = cls.get_video_duration(input_path)
+        if duration > 0 and time_offset_seconds >= duration:
+            time_offset_seconds = max(0.1, duration / 2.0)
+
+        hrs = int(time_offset_seconds // 3600)
+        mins = int((time_offset_seconds % 3600) // 60)
+        secs = time_offset_seconds % 60
+        ss_str = f"{hrs:02d}:{mins:02d}:{secs:06.3f}"
+
         args = [
             '-y',
-            '-ss', '00:00:05',
+            '-ss', ss_str,
             '-i', str(input_path),
             '-vframes', '1',
             '-q:v', '2',
