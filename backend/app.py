@@ -1,7 +1,9 @@
 import os
+import csv
+import io
 import math
 import time
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
 from config import Config
 from database import DatabaseManager
@@ -14,11 +16,13 @@ try:
     from backend.kafka_service import get_kafka_service
     from backend.traffic_generator import get_traffic_generator
     from backend.analytics_consumer import get_analytics_consumer
+    from backend.analytics_queries import AnalyticsQueries
 except ImportError:
     from analytics_schema import validate_event, PlaybackEvent
     from kafka_service import get_kafka_service
     from traffic_generator import get_traffic_generator
     from analytics_consumer import get_analytics_consumer
+    from analytics_queries import AnalyticsQueries
 
 # Allowed video extensions
 ALLOWED_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv'}
@@ -456,6 +460,108 @@ def create_app():
         """
         consumer = get_analytics_consumer()
         return jsonify(consumer.get_realtime_metrics()), 200
+
+    # -------------------------------------------------------------
+    # Historical Data Warehouse Analytics & Reporting Endpoints
+    # -------------------------------------------------------------
+    @app.route('/api/analytics/historical/summary', methods=['GET'])
+    def historical_summary():
+        """Returns aggregated fleet streaming KPIs across time window and optional video filter."""
+        start_time = request.args.get('start_time', type=float)
+        end_time = request.args.get('end_time', type=float)
+        video_id = request.args.get('video_id', type=str)
+        summary = AnalyticsQueries.get_historical_summary(start_time=start_time, end_time=end_time, video_id=video_id)
+        return jsonify(summary), 200
+
+    @app.route('/api/analytics/historical/timeseries', methods=['GET'])
+    def historical_timeseries():
+        """Returns time-bucketed trend points for charting historical QoS."""
+        interval = request.args.get('interval_seconds', default=60, type=int)
+        start_time = request.args.get('start_time', type=float)
+        end_time = request.args.get('end_time', type=float)
+        video_id = request.args.get('video_id', type=str)
+        series = AnalyticsQueries.get_historical_timeseries(
+            interval_seconds=interval, start_time=start_time, end_time=end_time, video_id=video_id
+        )
+        return jsonify(series), 200
+
+    @app.route('/api/analytics/historical/breakdown', methods=['GET'])
+    def historical_breakdown():
+        """Returns categorical distribution for a specified dimension."""
+        dimension = request.args.get('dimension', default='playback_quality', type=str)
+        start_time = request.args.get('start_time', type=float)
+        end_time = request.args.get('end_time', type=float)
+        video_id = request.args.get('video_id', type=str)
+        breakdown = AnalyticsQueries.get_historical_breakdown(
+            dimension=dimension, start_time=start_time, end_time=end_time, video_id=video_id
+        )
+        return jsonify(breakdown), 200
+
+    @app.route('/api/analytics/historical/retention', methods=['GET'])
+    def historical_retention():
+        """Returns segment-by-segment audience retention curve for a video asset."""
+        video_id = request.args.get('video_id', type=str)
+        if not video_id:
+            return jsonify({"error": "Bad Request", "message": "Missing required 'video_id' parameter."}), 400
+        bucket_size = request.args.get('bucket_seconds', default=15, type=int)
+        retention = AnalyticsQueries.get_retention_curve(video_id=video_id, bucket_seconds=bucket_size)
+        return jsonify(retention), 200
+
+    @app.route('/api/analytics/historical/export', methods=['GET'])
+    def historical_export():
+        """Exports raw warehouse telemetry events as downloadable CSV or JSON."""
+        fmt = request.args.get('format', default='csv', type=str).lower()
+        limit = min(50000, request.args.get('limit', default=10000, type=int))
+        video_id = request.args.get('video_id', type=str)
+        start_time = request.args.get('start_time', type=float)
+        end_time = request.args.get('end_time', type=float)
+
+        conditions = []
+        params = []
+        if start_time is not None:
+            conditions.append("timestamp >= ?")
+            params.append(start_time)
+        if end_time is not None:
+            conditions.append("timestamp <= ?")
+            params.append(end_time)
+        if video_id:
+            conditions.append("video_id = ?")
+            params.append(video_id)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = f"SELECT * FROM telemetry_events {where_clause} ORDER BY timestamp DESC LIMIT ?"
+        params.append(limit)
+
+        conn = DatabaseManager.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            rows = [dict(r) for r in cursor.fetchall()]
+        finally:
+            conn.close()
+
+        if fmt == 'json':
+            return jsonify({"count": len(rows), "events": rows}), 200
+
+        # Generate CSV
+        si = io.StringIO()
+        fieldnames = [
+            "id", "user_id", "video_id", "session_id", "timestamp",
+            "watch_time_seconds", "playback_quality", "buffer_health",
+            "playback_state", "device_type", "bitrate_kbps", "client_ip", "created_at"
+        ]
+        writer = csv.DictWriter(si, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in rows:
+            writer.writerow({k: r.get(k, "") for k in fieldnames})
+
+        output = si.getvalue()
+        filename = f"aetherstream_telemetry_{int(time.time())}.csv"
+        return Response(
+            output,
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
 
     return app
 
