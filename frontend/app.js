@@ -31,6 +31,9 @@ function switchView(targetId) {
     // If switching to videos library, refresh registry
     if (targetView === "view-videos") {
         fetchLibrary();
+    } else if (targetView === "view-reports") {
+        fetchReportsData();
+        populateReportVideoFilter();
     }
 }
 
@@ -987,4 +990,160 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         });
     }
+
+    // ========================================================
+    // QoS Reports Event Listeners
+    // ========================================================
+    const timeRangeButtons = document.querySelectorAll(".btn-time-range");
+    timeRangeButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+            timeRangeButtons.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            fetchReportsData();
+        });
+    });
+
+    const reportVideoSelect = document.getElementById("report-video-filter");
+    if (reportVideoSelect) {
+        reportVideoSelect.addEventListener("change", () => {
+            fetchReportsData();
+        });
+    }
+
+    const btnRefreshReports = document.getElementById("btn-refresh-reports");
+    if (btnRefreshReports) {
+        btnRefreshReports.addEventListener("click", () => {
+            fetchReportsData();
+        });
+    }
+
+    const btnExportCsv = document.getElementById("btn-export-csv");
+    if (btnExportCsv) {
+        btnExportCsv.addEventListener("click", () => {
+            const { startTime, videoId } = getActiveReportTimeParams();
+            const exportParams = new URLSearchParams();
+            exportParams.append("format", "csv");
+            if (startTime) exportParams.append("start_time", startTime);
+            if (videoId) exportParams.append("video_id", videoId);
+            window.open(`${API_BASE_URL}/analytics/historical/export?${exportParams.toString()}`, "_blank");
+        });
+    }
 });
+
+// ========================================================
+// QoS Reports & Historical Analytics Controller
+// ========================================================
+
+function getActiveReportTimeParams() {
+    const activeRangeBtn = document.querySelector(".btn-time-range.active");
+    const range = activeRangeBtn ? activeRangeBtn.getAttribute("data-range") : "15m";
+    const now = Date.now() / 1000;
+    
+    let startTime = null;
+    if (range === "15m") startTime = now - 900;
+    else if (range === "1h") startTime = now - 3600;
+    else if (range === "24h") startTime = now - 86400;
+    
+    const videoFilter = document.getElementById("report-video-filter");
+    const videoId = videoFilter ? videoFilter.value : "";
+    
+    return { startTime, videoId };
+}
+
+async function fetchReportsData() {
+    const reportsView = document.getElementById("view-reports");
+    if (!reportsView || !reportsView.classList.contains("active")) {
+        return;
+    }
+
+    const { startTime, videoId } = getActiveReportTimeParams();
+    const queryParams = new URLSearchParams();
+    if (startTime) queryParams.append("start_time", startTime);
+    if (videoId) queryParams.append("video_id", videoId);
+
+    try {
+        // 1. Fetch Summary Scorecard
+        const resSummary = await fetch(`${API_BASE_URL}/analytics/historical/summary?${queryParams.toString()}`);
+        if (resSummary.ok) {
+            const sumData = await resSummary.json();
+            const wHours = document.getElementById("report-stat-watch-hours");
+            const uViewers = document.getElementById("report-stat-unique-viewers");
+            const sRate = document.getElementById("report-stat-stall-rate");
+            const aBuffer = document.getElementById("report-stat-avg-buffer");
+
+            if (wHours) wHours.innerText = `${(sumData.total_watch_time_hours || 0).toFixed(1)}h`;
+            if (uViewers) uViewers.innerText = (sumData.unique_viewers || 0).toLocaleString();
+            if (sRate) sRate.innerText = `${(sumData.rebuffer_stall_rate_percent || 0).toFixed(1)}%`;
+            if (aBuffer) aBuffer.innerText = `${(sumData.avg_buffer_health_seconds || 0).toFixed(1)}s`;
+        }
+
+        // 2. Fetch Quality Breakdown
+        const resQuality = await fetch(`${API_BASE_URL}/analytics/historical/breakdown?dimension=playback_quality&${queryParams.toString()}`);
+        if (resQuality.ok) {
+            const qList = await resQuality.json();
+            const qBody = document.getElementById("report-quality-table-body");
+            if (qBody) {
+                if (qList.length === 0) {
+                    qBody.innerHTML = `<tr><td colspan="5" class="empty-message">No telemetry records in selected window.</td></tr>`;
+                } else {
+                    qBody.innerHTML = qList.map(item => `
+                        <tr>
+                            <td><span class="badge-pill badge-purple">${item.dimension_value}</span></td>
+                            <td>${item.event_count.toLocaleString()}</td>
+                            <td><strong>${item.share_percentage}%</strong></td>
+                            <td>${item.avg_buffer_health}s</td>
+                            <td>${item.stall_rate_percent}%</td>
+                        </tr>
+                    `).join("");
+                }
+            }
+        }
+
+        // 3. Fetch Device Breakdown
+        const resDevice = await fetch(`${API_BASE_URL}/analytics/historical/breakdown?dimension=device_type&${queryParams.toString()}`);
+        if (resDevice.ok) {
+            const dList = await resDevice.json();
+            const dBody = document.getElementById("report-device-table-body");
+            if (dBody) {
+                if (dList.length === 0) {
+                    dBody.innerHTML = `<tr><td colspan="5" class="empty-message">No device records in selected window.</td></tr>`;
+                } else {
+                    dBody.innerHTML = dList.map(item => `
+                        <tr>
+                            <td><span class="badge-pill badge-cyan">${item.dimension_value}</span></td>
+                            <td>${item.event_count.toLocaleString()}</td>
+                            <td>${item.unique_viewers.toLocaleString()}</td>
+                            <td>${item.avg_buffer_health}s</td>
+                            <td><strong>${item.share_percentage}%</strong></td>
+                        </tr>
+                    `).join("");
+                }
+            }
+        }
+    } catch (err) {
+        console.error("Error fetching historical reports:", err);
+    }
+}
+
+async function populateReportVideoFilter() {
+    const select = document.getElementById("report-video-filter");
+    if (!select) return;
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/videos`);
+        if (!res.ok) return;
+        const videos = await res.json();
+        
+        const curVal = select.value;
+        select.innerHTML = `<option value="">All Video Assets (${videos.length})</option>`;
+        videos.forEach(v => {
+            const opt = document.createElement("option");
+            opt.value = v.video_id;
+            opt.innerText = `${v.filename} (${v.video_id.substring(0, 8)})`;
+            select.appendChild(opt);
+        });
+        select.value = curVal;
+    } catch (err) {
+        console.warn("Failed to populate report video filter:", err);
+    }
+}

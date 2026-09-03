@@ -37,6 +37,10 @@
                     <i class="fa-solid fa-play"></i>
                     <span>Library & Jobs</span>
                 </a>
+                <a href="#reports" class="nav-item" id="nav-reports">
+                    <i class="fa-solid fa-chart-pie"></i>
+                    <span>QoS Reports</span>
+                </a>
             </nav>
             
             <div class="sidebar-footer">
@@ -409,6 +413,134 @@
                                 <i class="fa-solid fa-paper-plane icon-green"></i>
                                 <span>Pings: <strong id="telemetry-pings-val">0</strong></span>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- QoS Reports & Historical Analytics View -->
+            <section id="view-reports" class="view-section">
+                <div class="welcome-banner">
+                    <h1>QoS Reports &amp; Historical Analytics</h1>
+                    <p>Analyze long-term Quality-of-Service metrics, fleet buffer health, and warehouse telemetry exports.</p>
+                </div>
+
+                <!-- Report Filter Bar -->
+                <div class="dashboard-card report-filter-bar">
+                    <div class="filter-group">
+                        <span class="filter-label"><i class="fa-solid fa-calendar-days"></i> Time Range:</span>
+                        <div class="time-range-buttons">
+                            <button class="btn btn-time-range active" data-range="15m">Last 15m</button>
+                            <button class="btn btn-time-range" data-range="1h">Last 1h</button>
+                            <button class="btn btn-time-range" data-range="24h">Last 24h</button>
+                            <button class="btn btn-time-range" data-range="all">All Time</button>
+                        </div>
+                    </div>
+
+                    <div class="filter-group">
+                        <span class="filter-label"><i class="fa-solid fa-film"></i> Video Asset:</span>
+                        <select id="report-video-filter" class="custom-select">
+                            <option value="">All Video Assets</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-actions">
+                        <button class="btn btn-secondary" id="btn-refresh-reports">
+                            <i class="fa-solid fa-arrows-rotate"></i> Refresh
+                        </button>
+                        <button class="btn btn-primary" id="btn-export-csv">
+                            <i class="fa-solid fa-file-arrow-down"></i> Export CSV
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Historical KPI Scorecards Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-title">Total Watch Time</span>
+                            <i class="fa-solid fa-clock icon-purple"></i>
+                        </div>
+                        <div class="stat-value" id="report-stat-watch-hours">0.0h</div>
+                        <div class="stat-footer">
+                            <span class="stat-subtext">Accumulated fleet viewing hours</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-title">Unique Viewers</span>
+                            <i class="fa-solid fa-user-check icon-cyan"></i>
+                        </div>
+                        <div class="stat-value" id="report-stat-unique-viewers">0</div>
+                        <div class="stat-footer">
+                            <span class="stat-subtext">Distinct playback sessions</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-title">Global QoS Stall Rate</span>
+                            <i class="fa-solid fa-triangle-exclamation icon-yellow"></i>
+                        </div>
+                        <div class="stat-value" id="report-stat-stall-rate">0.0%</div>
+                        <div class="stat-footer">
+                            <span class="stat-subtext">Rebuffer percentage (&lt;2.0% SLA)</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-title">Fleet Avg Buffer</span>
+                            <i class="fa-solid fa-layer-group icon-green"></i>
+                        </div>
+                        <div class="stat-value" id="report-stat-avg-buffer">0.0s</div>
+                        <div class="stat-footer">
+                            <span class="stat-subtext">Average buffer depth ahead of playhead</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detailed Breakdown Slices -->
+                <div class="analytics-grid">
+                    <!-- Resolution Breakdown Table Card -->
+                    <div class="dashboard-card">
+                        <h3>Stream Quality Performance</h3>
+                        <p class="card-subtitle">Resolution share and QoS performance in selected window</p>
+                        <div class="table-responsive" style="margin-top: 1rem;">
+                            <table class="report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Resolution</th>
+                                        <th>Events</th>
+                                        <th>Share</th>
+                                        <th>Avg Buffer</th>
+                                        <th>Stall Rate</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="report-quality-table-body">
+                                    <tr><td colspan="5" class="empty-message">Loading quality breakdown...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Device Breakdown Table Card -->
+                    <div class="dashboard-card">
+                        <h3>Device Fleet Distribution</h3>
+                        <p class="card-subtitle">Device platform usage and stability metrics</p>
+                        <div class="table-responsive" style="margin-top: 1rem;">
+                            <table class="report-table">
+                                <thead>
+                                    <tr>
+                                        <th>Device</th>
+                                        <th>Events</th>
+                                        <th>Unique Users</th>
+                                        <th>Avg Buffer</th>
+                                        <th>Share</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="report-device-table-body">
+                                    <tr><td colspan="5" class="empty-message">Loading device breakdown...</td></tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
