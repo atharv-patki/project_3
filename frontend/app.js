@@ -113,8 +113,8 @@ async function fetchLibrary() {
         const completedTranscodes = videos.filter(v => v.transcode_status === 'completed');
         const activeTranscodeJobs = videos.filter(v => v.transcode_status === 'pending' || v.transcode_status === 'processing');
         
-        totalCompletedLabel.innerText = completedTranscodes.length;
-        totalJobsLabel.innerText = activeTranscodeJobs.length;
+        if (totalCompletedLabel) totalCompletedLabel.innerText = completedTranscodes.length;
+        if (totalJobsLabel) totalJobsLabel.innerText = activeTranscodeJobs.length;
 
         if (videos.length === 0) {
             tableBody.innerHTML = `<tr><td colspan="6" class="table-empty">No video assets found in registry.</td></tr>`;

@@ -8,13 +8,13 @@ import threading
 from typing import List, Dict, Any, Optional
 
 try:
-    from analytics_schema import PlaybackEvent, validate_event
-    from kafka_service import get_kafka_service
-    from database import DatabaseManager
-except ImportError:
     from backend.analytics_schema import PlaybackEvent, validate_event
     from backend.kafka_service import get_kafka_service
     from backend.database import DatabaseManager
+except ImportError:
+    from analytics_schema import PlaybackEvent, validate_event
+    from kafka_service import get_kafka_service
+    from database import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
