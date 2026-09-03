@@ -653,6 +653,221 @@ async function completeUploadSession() {
     }
 }
 
+// ========================================================
+// Real-Time Analytics Dashboard & Trendline Chart Logic
+// ========================================================
+
+async function fetchRealtimeAnalytics() {
+    const dashboardView = document.getElementById("view-dashboard");
+    if (!dashboardView || !dashboardView.classList.contains("active")) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE_URL}/analytics/realtime`);
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        // 1. Update KPI Card Stat counters
+        const viewersLabel = document.getElementById("stat-active-viewers");
+        const bufferLabel = document.getElementById("stat-avg-buffer");
+        const stallLabel = document.getElementById("stat-stall-rate");
+        const pingsLabel = document.getElementById("stat-analytics-pings");
+
+        if (viewersLabel) viewersLabel.innerText = data.active_concurrent_viewers || 0;
+        if (bufferLabel) bufferLabel.innerText = `${(data.avg_buffer_health_seconds || 0).toFixed(1)}s`;
+        if (stallLabel) stallLabel.innerText = `${(data.rebuffer_stall_rate_percent || 0).toFixed(1)}%`;
+        if (pingsLabel) pingsLabel.innerText = `${Math.round(data.events_per_second || 0)}/s`;
+
+        // 2. Update Quality Bars
+        const totalActive = Math.max(1, data.active_concurrent_viewers || 0);
+        const qDist = data.quality_distribution || {};
+        const q1080 = qDist["1080p"] || 0;
+        const q720 = qDist["720p"] || 0;
+        const q480 = qDist["480p"] || 0;
+
+        const p1080 = Math.round((q1080 / totalActive) * 100);
+        const p720 = Math.round((q720 / totalActive) * 100);
+        const p480 = Math.round((q480 / totalActive) * 100);
+
+        const l1080 = document.getElementById("label-quality-1080p");
+        const b1080 = document.getElementById("bar-quality-1080p");
+        if (l1080 && b1080) {
+            l1080.innerText = `${q1080} (${p1080}%)`;
+            b1080.style.width = `${p1080}%`;
+        }
+
+        const l720 = document.getElementById("label-quality-720p");
+        const b720 = document.getElementById("bar-quality-720p");
+        if (l720 && b720) {
+            l720.innerText = `${q720} (${p720}%)`;
+            b720.style.width = `${p720}%`;
+        }
+
+        const l480 = document.getElementById("label-quality-480p");
+        const b480 = document.getElementById("bar-quality-480p");
+        if (l480 && b480) {
+            l480.innerText = `${q480} (${p480}%)`;
+            b480.style.width = `${p480}%`;
+        }
+
+        // 3. Update Device Chips
+        const devDist = data.device_distribution || {};
+        const chipWeb = document.getElementById("chip-dev-web");
+        const chipMobile = document.getElementById("chip-dev-mobile");
+        const chipTv = document.getElementById("chip-dev-tv");
+        const chipDesktop = document.getElementById("chip-dev-desktop");
+
+        if (chipWeb) chipWeb.innerText = devDist["web"] || 0;
+        if (chipMobile) chipMobile.innerText = devDist["mobile"] || 0;
+        if (chipTv) chipTv.innerText = devDist["smart_tv"] || 0;
+        if (chipDesktop) chipDesktop.innerText = devDist["desktop"] || 0;
+
+        // 4. Render Live Trendline Chart
+        renderTelemetryTrendChart(data.time_series || []);
+
+    } catch (err) {
+        console.warn("[*] Realtime analytics query failed:", err);
+    }
+}
+
+// Canvas-based Real-time Trendline Chart Renderer
+function renderTelemetryTrendChart(timeSeries) {
+    const canvas = document.getElementById("chart-telemetry-trend");
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    const container = canvas.parentElement;
+    const width = container.clientWidth || 500;
+    const height = 190;
+
+    // Handle high DPI crisp rendering
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+    }
+    ctx.resetTransform();
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, width, height);
+
+    const padding = { top: 20, right: 20, bottom: 25, left: 35 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+
+    // Draw background grid lines
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.04)";
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+        const y = padding.top + (chartH / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(padding.left + chartW, y);
+        ctx.stroke();
+    }
+
+    if (timeSeries.length < 2) {
+        ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+        ctx.font = "12px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Awaiting streaming telemetry data points...", width / 2, height / 2);
+        return;
+    }
+
+    // Determine max viewers & max buffer for scaling
+    const maxViewers = Math.max(10, ...timeSeries.map(p => p.active_viewers || 0));
+    const maxBuffer = Math.max(10, ...timeSeries.map(p => p.avg_buffer_health || 0));
+
+    // Helper coordinate calculators
+    const getX = (idx) => padding.left + (idx / (timeSeries.length - 1)) * chartW;
+    const getYViewers = (val) => padding.top + chartH - (val / maxViewers) * chartH;
+    const getYBuffer = (val) => padding.top + chartH - (val / maxBuffer) * chartH;
+
+    // 1. Draw Viewers Fill & Line (Purple)
+    const grad = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartH);
+    grad.addColorStop(0, "rgba(168, 85, 247, 0.35)");
+    grad.addColorStop(1, "rgba(168, 85, 247, 0.0)");
+
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getYViewers(timeSeries[0].active_viewers || 0));
+    for (let i = 1; i < timeSeries.length; i++) {
+        ctx.lineTo(getX(i), getYViewers(timeSeries[i].active_viewers || 0));
+    }
+    ctx.lineTo(getX(timeSeries.length - 1), padding.top + chartH);
+    ctx.lineTo(getX(0), padding.top + chartH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getYViewers(timeSeries[0].active_viewers || 0));
+    for (let i = 1; i < timeSeries.length; i++) {
+        ctx.lineTo(getX(i), getYViewers(timeSeries[i].active_viewers || 0));
+    }
+    ctx.strokeStyle = "#a855f7";
+    ctx.lineWidth = 2.5;
+    ctx.shadowColor = "rgba(168, 85, 247, 0.5)";
+    ctx.shadowBlur = 8;
+    ctx.stroke();
+    ctx.shadowBlur = 0; // Reset shadow
+
+    // 2. Draw Buffer Health Line (Cyan)
+    ctx.beginPath();
+    ctx.moveTo(getX(0), getYBuffer(timeSeries[0].avg_buffer_health || 0));
+    for (let i = 1; i < timeSeries.length; i++) {
+        ctx.lineTo(getX(i), getYBuffer(timeSeries[i].avg_buffer_health || 0));
+    }
+    ctx.strokeStyle = "#06b6d4";
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    // 3. Draw Axis Labels
+    ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.font = "10px Inter, sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText(maxViewers.toString(), padding.left - 6, padding.top + 10);
+    ctx.fillText("0", padding.left - 6, padding.top + chartH);
+
+    ctx.textAlign = "center";
+    ctx.fillText(timeSeries[0].time_label || "", padding.left, height - 6);
+    ctx.fillText(timeSeries[timeSeries.length - 1].time_label || "", padding.left + chartW, height - 6);
+}
+
+// ========================================================
+// Synthetic Traffic Simulator UI Handlers
+// ========================================================
+
+async function fetchSimulationStatus() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/analytics/simulation/status`);
+        if (!res.ok) return;
+        const st = await res.json();
+        updateSimulationUI(st);
+    } catch (err) {
+        console.warn("[*] Error fetching simulation status:", err);
+    }
+}
+
+function updateSimulationUI(status) {
+    const badge = document.getElementById("sim-status-badge");
+    const btnStart = document.getElementById("btn-start-sim");
+    const btnStop = document.getElementById("btn-stop-sim");
+
+    if (status.running) {
+        badge.className = "sim-badge active";
+        badge.innerHTML = `<span class="badge-dot"></span> Simulating ${status.active_viewers} Viewers (${status.events_per_second} eps)`;
+        btnStart.classList.add("hidden");
+        btnStop.classList.remove("hidden");
+    } else {
+        badge.className = "sim-badge idle";
+        badge.innerHTML = `<span class="badge-dot"></span> Simulator Idle`;
+        btnStart.classList.remove("hidden");
+        btnStop.classList.add("hidden");
+    }
+}
+
 // Registry Refresher button
 document.getElementById("btn-refresh-library").addEventListener("click", () => {
     fetchLibrary();
@@ -670,13 +885,17 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize health and library query
     checkSystemHealth();
     fetchLibrary();
-    
-    // Regular health check interval
     setInterval(checkSystemHealth, 10000);
     
+    // Start real-time analytics polling (every 1s)
+    fetchRealtimeAnalytics();
+    fetchSimulationStatus();
+    setInterval(fetchRealtimeAnalytics, 1000);
+    setInterval(fetchSimulationStatus, 3000);
+
+    // Video Player & Quality Switch Controls
     const playerVideo = document.getElementById("video-player");
 
-    // Video player close event handler
     document.getElementById("btn-close-player").addEventListener("click", () => {
         stopTelemetryHeartbeat();
         emitTelemetryEvent("ended");
@@ -684,7 +903,6 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById("video-player-card").classList.add("hidden");
     });
     
-    // Quality selection switch events
     document.getElementById("btn-quality-720p").addEventListener("click", () => {
         switchResolution("720p");
     });
@@ -718,4 +936,55 @@ document.addEventListener("DOMContentLoaded", () => {
         stopTelemetryHeartbeat();
         emitTelemetryEvent("ended");
     });
+
+    // Simulation Preset buttons
+    const presetButtons = document.querySelectorAll(".btn-preset");
+    const simInput = document.getElementById("sim-viewer-input");
+    presetButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+            presetButtons.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            if (simInput) simInput.value = btn.getAttribute("data-viewers");
+        });
+    });
+
+    // Start Simulation Button
+    const btnStartSim = document.getElementById("btn-start-sim");
+    if (btnStartSim) {
+        btnStartSim.addEventListener("click", async () => {
+            const viewers = parseInt(simInput ? simInput.value : 50, 10) || 50;
+            btnStartSim.disabled = true;
+            try {
+                const res = await fetch(`${API_BASE_URL}/analytics/simulation/start`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ viewers: viewers, duration_seconds: 60 })
+                });
+                await res.json();
+                fetchSimulationStatus();
+                fetchRealtimeAnalytics();
+            } catch (err) {
+                console.error("Failed to start simulation:", err);
+            } finally {
+                btnStartSim.disabled = false;
+            }
+        });
+    }
+
+    // Stop Simulation Button
+    const btnStopSim = document.getElementById("btn-stop-sim");
+    if (btnStopSim) {
+        btnStopSim.addEventListener("click", async () => {
+            btnStopSim.disabled = true;
+            try {
+                await fetch(`${API_BASE_URL}/analytics/simulation/stop`, { method: "POST" });
+                fetchSimulationStatus();
+                fetchRealtimeAnalytics();
+            } catch (err) {
+                console.error("Failed to stop simulation:", err);
+            } finally {
+                btnStopSim.disabled = false;
+            }
+        });
+    }
 });

@@ -73,32 +73,150 @@
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-header">
-                            <span class="stat-title">Transcoding Jobs</span>
-                            <i class="fa-solid fa-gears icon-purple"></i>
+                            <span class="stat-title">Concurrent Viewers</span>
+                            <i class="fa-solid fa-users icon-purple"></i>
                         </div>
-                        <div class="stat-value" id="stat-transcoding-jobs">0</div>
+                        <div class="stat-value" id="stat-active-viewers">0</div>
                         <div class="stat-footer">
-                            <span class="stat-subtext">Active conversions in worker pool</span>
+                            <span class="stat-subtext"><span class="pulse-dot"></span> Active playback telemetry streams</span>
                         </div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-header">
-                            <span class="stat-title">Analytics Ingestion</span>
-                            <i class="fa-solid fa-chart-simple icon-cyan"></i>
+                            <span class="stat-title">Avg Buffer Health</span>
+                            <i class="fa-solid fa-layer-group icon-cyan"></i>
+                        </div>
+                        <div class="stat-value" id="stat-avg-buffer">0.0s</div>
+                        <div class="stat-footer">
+                            <span class="stat-subtext">Fleet buffer depth ahead of playhead</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-title">QoS Rebuffer Rate</span>
+                            <i class="fa-solid fa-triangle-exclamation icon-yellow"></i>
+                        </div>
+                        <div class="stat-value" id="stat-stall-rate">0.0%</div>
+                        <div class="stat-footer">
+                            <span class="stat-subtext">Stall percentage (&lt;2.0% target)</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-header">
+                            <span class="stat-title">Kafka Ingestion</span>
+                            <i class="fa-solid fa-chart-line icon-green"></i>
                         </div>
                         <div class="stat-value" id="stat-analytics-pings">0/s</div>
                         <div class="stat-footer">
-                            <span class="stat-subtext">Kafka event stream throughput</span>
+                            <span class="stat-subtext">Telemetry broker throughput rate</span>
                         </div>
                     </div>
-                    <div class="stat-card">
-                        <div class="stat-header">
-                            <span class="stat-title">Completed Uploads</span>
-                            <i class="fa-solid fa-video icon-green"></i>
+                </div>
+
+                <!-- Live Streaming Analytics Section -->
+                <div class="analytics-grid">
+                    <!-- Real-Time Trendline Chart Card -->
+                    <div class="dashboard-card chart-card">
+                        <div class="card-header-flex">
+                            <div>
+                                <h3>Real-Time Streaming Telemetry</h3>
+                                <p class="card-subtitle">Live concurrent viewer &amp; buffer trends (rolling 60s window)</p>
+                            </div>
+                            <div class="chart-legend">
+                                <span class="legend-item"><span class="legend-color color-purple"></span> Viewers</span>
+                                <span class="legend-item"><span class="legend-color color-cyan"></span> Avg Buffer (s)</span>
+                            </div>
                         </div>
-                        <div class="stat-value" id="stat-completed-uploads">0</div>
-                        <div class="stat-footer">
-                            <span class="stat-subtext">Optimized media library assets</span>
+                        <div class="chart-container">
+                            <canvas id="chart-telemetry-trend"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Quality & Device Distribution Card -->
+                    <div class="dashboard-card breakdown-card">
+                        <h3>Stream Quality &amp; Devices</h3>
+                        <p class="card-subtitle">Active ABR resolution distribution across fleet</p>
+                        
+                        <div class="quality-bars-container">
+                            <div class="quality-bar-row">
+                                <div class="bar-meta">
+                                    <span>1080p HD</span>
+                                    <span id="label-quality-1080p">0 (0%)</span>
+                                </div>
+                                <div class="bar-track">
+                                    <div class="bar-fill fill-purple" id="bar-quality-1080p" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <div class="quality-bar-row">
+                                <div class="bar-meta">
+                                    <span>720p HD</span>
+                                    <span id="label-quality-720p">0 (0%)</span>
+                                </div>
+                                <div class="bar-track">
+                                    <div class="bar-fill fill-cyan" id="bar-quality-720p" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            <div class="quality-bar-row">
+                                <div class="bar-meta">
+                                    <span>480p SD</span>
+                                    <span id="label-quality-480p">0 (0%)</span>
+                                </div>
+                                <div class="bar-track">
+                                    <div class="bar-fill fill-yellow" id="bar-quality-480p" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="device-chips-container">
+                            <div class="device-chip">
+                                <i class="fa-solid fa-laptop"></i> Web: <strong id="chip-dev-web">0</strong>
+                            </div>
+                            <div class="device-chip">
+                                <i class="fa-solid fa-mobile-screen"></i> Mobile: <strong id="chip-dev-mobile">0</strong>
+                            </div>
+                            <div class="device-chip">
+                                <i class="fa-solid fa-tv"></i> Smart TV: <strong id="chip-dev-tv">0</strong>
+                            </div>
+                            <div class="device-chip">
+                                <i class="fa-solid fa-desktop"></i> Desktop: <strong id="chip-dev-desktop">0</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Synthetic Traffic Generator Control Panel -->
+                <div class="dashboard-row">
+                    <div class="dashboard-card card-large">
+                        <div class="card-header-flex">
+                            <div>
+                                <h3>Synthetic Viewer Traffic Generator</h3>
+                                <p class="card-subtitle">Launch concurrent virtual viewers to stress-test telemetry ingestion and Kafka brokers</p>
+                            </div>
+                            <span class="sim-badge idle" id="sim-status-badge">
+                                <span class="badge-dot"></span> Simulator Idle
+                            </span>
+                        </div>
+
+                        <div class="sim-controls-panel">
+                            <div class="sim-presets">
+                                <span class="sim-label">Viewer Count Presets:</span>
+                                <button class="btn btn-preset active" data-viewers="50">50</button>
+                                <button class="btn btn-preset" data-viewers="100">100</button>
+                                <button class="btn btn-preset" data-viewers="250">250</button>
+                                <button class="btn btn-preset" data-viewers="500">500</button>
+                            </div>
+                            <div class="sim-custom-input">
+                                <label for="sim-viewer-input">Custom:</label>
+                                <input type="number" id="sim-viewer-input" value="50" min="10" max="1000" step="10">
+                            </div>
+                            <div class="sim-actions">
+                                <button class="btn btn-primary" id="btn-start-sim">
+                                    <i class="fa-solid fa-rocket"></i> Launch Traffic Burst
+                                </button>
+                                <button class="btn btn-secondary hidden" id="btn-stop-sim">
+                                    <i class="fa-solid fa-stop"></i> Stop Simulation
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -123,7 +241,7 @@
                                 </div>
                                 <div class="node-details">
                                     <h4>FFmpeg Transcoder</h4>
-                                    <p id="node-transcoder-status">Offline (Week 2)</p>
+                                    <p id="node-transcoder-status">Active Worker Pool</p>
                                 </div>
                             </div>
                             <div class="system-node-card">
@@ -132,7 +250,7 @@
                                 </div>
                                 <div class="node-details">
                                     <h4>Kafka Event Broker</h4>
-                                    <p id="node-kafka-status">Offline (Week 3)</p>
+                                    <p id="node-kafka-status">Active (In-Memory / Live Broker)</p>
                                 </div>
                             </div>
                             <div class="system-node-card">
