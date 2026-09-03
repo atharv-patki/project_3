@@ -12,9 +12,11 @@ from worker import queue_transcode_job
 try:
     from analytics_schema import validate_event, PlaybackEvent
     from kafka_service import get_kafka_service
+    from traffic_generator import get_traffic_generator
 except ImportError:
     from backend.analytics_schema import validate_event, PlaybackEvent
     from backend.kafka_service import get_kafka_service
+    from backend.traffic_generator import get_traffic_generator
 
 # Allowed video extensions
 ALLOWED_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.wmv'}
@@ -390,6 +392,55 @@ def create_app():
         """
         broker = get_kafka_service()
         return jsonify(broker.get_status()), 200
+
+    # -------------------------------------------------------------
+    # Synthetic Viewer Traffic Simulation Endpoints
+    # -------------------------------------------------------------
+    @app.route('/api/analytics/simulation/start', methods=['POST'])
+    def start_simulation():
+        """
+        Starts the synthetic viewer traffic generator.
+        """
+        body = request.get_json(silent=True) or {}
+        viewers = int(body.get('viewers', 100))
+        duration = body.get('duration_seconds')
+        if duration is not None:
+            duration = int(duration)
+
+        generator = get_traffic_generator()
+        started = generator.start_simulation(num_viewers=viewers, duration_seconds=duration)
+        if not started:
+            return jsonify({
+                "error": "Conflict",
+                "message": "Traffic simulation is already active.",
+                "status": generator.get_status()
+            }), 409
+
+        return jsonify({
+            "status": "started",
+            "message": f"Simulating {viewers} concurrent viewers.",
+            "metrics": generator.get_status()
+        }), 200
+
+    @app.route('/api/analytics/simulation/stop', methods=['POST'])
+    def stop_simulation():
+        """
+        Stops the synthetic viewer traffic generator.
+        """
+        generator = get_traffic_generator()
+        stopped = generator.stop_simulation()
+        return jsonify({
+            "status": "stopped" if stopped else "not_running",
+            "metrics": generator.get_status()
+        }), 200
+
+    @app.route('/api/analytics/simulation/status', methods=['GET'])
+    def simulation_status():
+        """
+        Returns real-time status and throughput of the traffic generator.
+        """
+        generator = get_traffic_generator()
+        return jsonify(generator.get_status()), 200
 
     return app
 
