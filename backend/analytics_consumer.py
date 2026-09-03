@@ -8,9 +8,11 @@ from typing import Dict, Any, List, Optional
 try:
     from backend.config import Config
     from backend.kafka_service import get_kafka_service
+    from backend.database import DatabaseManager
 except ImportError:
     from config import Config
     from kafka_service import get_kafka_service
+    from database import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -192,14 +194,22 @@ class MetricsAggregator:
 class AnalyticsConsumer:
     """
     Background Stream Consumer Thread.
-    Continuously pulls events from the message broker and feeds the real-time aggregator.
+    Continuously pulls events from the message broker, feeds the real-time aggregator,
+    and asynchronously buffers and persists events into the SQLite/PostgreSQL warehouse.
     """
     _instance: Optional['AnalyticsConsumer'] = None
     _lock = threading.Lock()
 
-    def __init__(self):
+    def __init__(self, batch_flush_threshold: int = 150, flush_interval_seconds: float = 1.0):
         self.aggregator = MetricsAggregator()
         self.is_running = False
+        self.batch_flush_threshold = batch_flush_threshold
+        self.flush_interval_seconds = flush_interval_seconds
+        
+        self._persistence_buffer: List[Any] = []
+        self._persistence_lock = threading.Lock()
+        self._last_flush_time = time.time()
+        
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
@@ -220,18 +230,33 @@ class AnalyticsConsumer:
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._consume_loop, daemon=True, name="AnalyticsConsumerThread")
             self._thread.start()
-            print("[+] Analytics Stream Consumer worker started.")
+            print("[+] Analytics Stream Consumer & Warehouse Persistence worker started.")
 
     def stop(self):
-        """Stop the background consumer."""
+        """Stop the background consumer and flush pending telemetry to database."""
         with self._lock:
             if not self.is_running:
                 return
             self._stop_event.set()
             self.is_running = False
+            self._flush_persistence_buffer()
+
+    def _flush_persistence_buffer(self):
+        """Flushes buffered telemetry events to the database warehouse."""
+        with self._persistence_lock:
+            if not self._persistence_buffer:
+                return
+            events_to_write = list(self._persistence_buffer)
+            self._persistence_buffer.clear()
+            self._last_flush_time = time.time()
+
+        try:
+            DatabaseManager.batch_insert_events(events_to_write)
+        except Exception as e:
+            logger.error(f"Failed to persist telemetry batch to warehouse: {e}")
 
     def _consume_loop(self):
-        """Worker loop reading from broker queue."""
+        """Worker loop reading from broker queue and flushing to database."""
         broker = get_kafka_service()
         channel = broker.get_consumer_channel()
 
@@ -240,15 +265,40 @@ class AnalyticsConsumer:
                 # Read event from queue with timeout
                 event = channel.get(timeout=0.2)
                 if event is not None:
+                    # 1. Real-time in-memory KPI aggregation
                     self.aggregator.ingest_event(event)
+                    
+                    # 2. Add to batch persistence buffer
+                    with self._persistence_lock:
+                        self._persistence_buffer.append(event)
+                        should_flush = (
+                            len(self._persistence_buffer) >= self.batch_flush_threshold or
+                            (time.time() - self._last_flush_time) >= self.flush_interval_seconds
+                        )
+                    
+                    if should_flush:
+                        self._flush_persistence_buffer()
+
                     channel.task_done()
             except queue.Empty:
                 pass
             except Exception as e:
                 logger.error(f"Error consuming analytics event: {e}")
 
+            # Check periodic timer flush
+            with self._persistence_lock:
+                timer_flush = (
+                    bool(self._persistence_buffer) and
+                    (time.time() - self._last_flush_time) >= self.flush_interval_seconds
+                )
+            if timer_flush:
+                self._flush_persistence_buffer()
+
             # Maintain time series ticks periodically
             self.aggregator.prune_and_tick()
+
+        # Final cleanup flush on exit
+        self._flush_persistence_buffer()
 
     def get_realtime_metrics(self) -> Dict[str, Any]:
         """Expose current real-time streaming KPIs."""
